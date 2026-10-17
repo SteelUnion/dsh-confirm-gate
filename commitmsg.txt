@@ -1,0 +1,17 @@
+release: v0.1.1 with exact peerDependencies
+
+Pin the host contract to the exact verified runtime instead of a range.
+
+DSH's installation check (dsh-app-boot: evaluatePluginCompatibility) reads
+only peerDependencies whose name is '@deepseek-ai/dsh' or starts with
+'@deepseek-ai/dsh-'. It evaluates them with includePrerelease:true and blocks
+installation on mismatch. A top-level engines.dsh is never consulted there.
+
+Declared exact versions, verified live on this machine:
+  @deepseek-ai/dsh        0.2.0-rc.2
+  @deepseek-ai/dsh-tools  0.2.0-rc.2
+  @deepseek-ai/cordis     4.0.4   (recorded, not host-checked)
+
+Verification: replayed DSH's own check with the semver build shipped inside
+DSH against runtime 0.2.0-rc.2 - both host-checked entries pass. Integration
+tests unchanged at 27/27.
