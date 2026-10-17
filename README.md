@@ -24,6 +24,19 @@ The plugin gates itself by the deployment's sandbox mode, read from `ctx.shell.s
 
 Put plainly: **under a sandbox this plugin would be redundant — and worse, it would interrupt legitimate operations a second time.** So it only installs itself where nothing else is keeping score. If a preset switching the session into a sandbox does not take effect until restart, that is by design — the gate decision is made once, at load.
 
+> ### ⚠️ Status of sandbox and read-only support: **implemented but UNTESTED**
+>
+> This plugin was built for, and has only ever been verified under,
+> **`danger-full-access`** — that is the default and the supported configuration.
+>
+> The auto-disable logic for `read-only` and `workspace-write` is in the code and
+> covered by unit tests against a simulated `ctx`, but **it has not been exercised
+> on a real machine**. Treat it as a prepared feature, not a validated one:
+> **test it on your own device before relying on it.**
+>
+> If you do test it, a report either way is welcome — a negative result is just as
+> useful as a positive one.
+
 ### Who this is for
 
 | Situation | Fits? |
@@ -387,6 +400,7 @@ Offline integration tests (18/18 passing) cover: 30 consecutive persistent opera
 
 **Not yet verified:**
 
+- **Sandbox and read-only auto-disable on a real machine** — the logic exists and unit tests pass against a simulated `ctx`, but it has never run under an actual `read-only` or `workspace-write` deployment. Test it on your own device before relying on it.
 - Actual behaviour in the `12 ~ 15` range
 - Whether `ask` actually surfaces an approval prompt at `>= 15` (requires `approval: ask` and a responder online)
 
