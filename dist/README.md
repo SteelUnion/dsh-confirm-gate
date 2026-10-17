@@ -48,22 +48,24 @@
 
 | 文件 | 版本 | 大小 | 日期 |
 |---|---|---|---|
-| `dsh-confirm-gate-v0.1.1.zip` | 0.1.1 | 见下 | 2026-10-17 |
+| `dsh-confirm-gate-v0.1.1.zip` | 0.1.1 | 35.2 KB | 2026-10-17 |
 | `dsh-confirm-gate-v0.1.0.zip` | 0.1.0 | 34.3 KB | 2026-10-17 |
+
+v0.1.0 只留在这里做对照；它在 GitHub Release 上有永久副本，随时可下载。
 
 ### 包内容
 
 ```
-lib/index.js          25.8 KB   插件主体（唯一运行必需文件）
-test/integration.mjs  11.2 KB   离线集成测试，27 项
-package.json           1.2 KB   含 dsh.bundle.patch 声明
+lib/index.js          25.2 KB   插件主体（唯一运行必需文件）
+test/integration.mjs  11.0 KB   离线集成测试，27 项
+package.json           1.3 KB   含 dsh.bundle.patch 与 peerDependencies
 cordis.patch.yml         443 B   默认挂载配置
-README.md             22.3 KB   英文
-README.zh-CN.md       20.2 KB   中文
-LICENSE                1.1 KB   MIT
+README.md             22.0 KB   英文
+README.zh-CN.md       20.0 KB   中文
+LICENSE                1.0 KB   MIT
 ```
 
-**不含**：`.git`、`dist`、`docs`、`src`、`node_modules`。
+**不含**：`.git`、`dist`、`docs`、`node_modules`、打包脚本。
 
 ## 怎么用
 
@@ -76,8 +78,13 @@ dsh plugin --profile desktop add file:<解压目录>
 
 ## 怎么重新打包
 
-打包脚本在 `default-workspace\`，按白名单收集文件，不靠 git 导出。
-改完代码重跑一次，版本号从 `package.json` 读。
+```powershell
+node pack.mjs
+```
+
+脚本在仓库根目录，白名单收文件（`INCLUDE` 数组，不用通配），版本号从 `package.json` 读，输出到 `dist/dsh-confirm-gate-v<version>.zip`。
+
+两个设计点：**时间戳固定**，同样的输入打出同样的字节；**版本交叉校验**，文件名和包内 `package.json` 不一致就直接报错——防止再出现「文件名 v0.1.1、包里 0.1.0」。
 
 ## 版本命名
 
