@@ -9,6 +9,10 @@ A runtime plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-
 > **This is not a security boundary. It is a cost boundary and a course-correction mechanism.**
 > It assumes the agent is running **without a sandbox holding the boundary**, and its purpose is to give the model **the ability to brake on its own** before it burns tokens or rewrites files. Real sandbox isolation is provided by DSH's own sandbox — complementary to this plugin, not a replacement.
 
+*c. 0.27 USD of model spend (author's estimate, see [`dist/COSTS.md`](dist/COSTS.md)) — the rest of that day went to environment diagnosis and research, not to this plugin.*
+
+A ready-to-install archive lives in [`dist/`](dist/).
+
 ### Scope: it stays silent under a sandbox
 
 The plugin decides, **on every tool call**, whether it should be counting. The mode comes from two sources, in priority order:
