@@ -40,20 +40,29 @@ Put plainly: **under a sandbox this plugin would be redundant — and worse, it 
 
 Hooks are always registered; the decision is per call. That is what makes hot-switching work: move the session into a sandbox and the gate goes quiet on the very next call; move it back and counting resumes. No restart needed.
 
-> ### ✅ Status: verified on a real machine
+> ### ✅ Status: verified, including live hot-switching
 >
-> All three modes were exercised by hand on Windows, DSH `0.2.0-rc.2`, with the
-> session's permission mode switched live between runs:
+> Exercised by hand on Windows, DSH `0.2.0-rc.2`. The session's permission mode
+> was **switched live, without restarting DSH**, walking the sequence
+> full → workspace-write → read-only → full:
 >
 > | Mode | Write a file | `pwsh` | Gate counted? |
 > |---|---|---|---|
-> | `danger-full-access` | ✅ succeeds | ✅ runs | ✅ counts |
-> | `workspace-write` | ✅ succeeds | ❌ fails with `0xC0000142` | ❌ silent |
-> | `read-only` | ❌ sandbox denies | ✅ runs | ❌ silent |
+> | `danger-full-access` | ✅ succeeds | ✅ runs | ✅ **1/10 → 2/10 → 3/10** |
+> | `workspace-write` | ✅ succeeds | ❌ fails with `0xC0000142` | ❌ silent (2 ops) |
+> | `read-only` | ❌ sandbox denies | ✅ runs | ❌ silent (2 ops) |
+> | `danger-full-access` again | ✅ succeeds | ✅ runs | ✅ **1/10, counting resumed** |
 >
-> The important part is the two "silent" rows: the sandbox rejected or confined
-> the operation and the gate said nothing — exactly the intended division of
-> labour. Counting resumes when the session returns to full permissions.
+> Two things matter here. The silent rows show the division of labour working —
+> the sandbox confined or rejected the operation and the gate stayed out of the
+> way. The last row shows the gate coming back **in the same process**, which is
+> the whole point of deciding per call instead of at load.
+>
+> Honest caveat: in this deployment `ctx.get('shell')` returned `undefined`, so
+> the "not sandboxed" verdict came from the *unreadable, therefore fail open*
+> branch rather than from a successfully read mode. The behaviour is correct;
+> the path is the fallback one. A deployment that exposes `shell` would take the
+> primary path instead.
 
 ### Who this is for
 
