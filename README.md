@@ -1,11 +1,22 @@
 # dsh-confirm-gate
 
 **在完全权限的主机上，让 AI Agent 可控运行的次数闸框架。**
+*A bounded-run confirm gate for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) — count persistent operations per turn, instruct the model to stop, then ask the user.*
 
 给 DeepSeek Harness (DSH) 用的运行时插件。提供**每轮对话独立的持久化操作计数器**，在免确认额度用尽后向模型注入停止指令，达到硬上限时索要用户 confirm。
 
 > **这不是安全边界，是成本边界和方向纠偏机制。**
 > 它假设你已经给了 Agent 完全权限（`danger-full-access`），目的是让模型在烧 token 和乱改文件之前**有能力自己刹车**。真正的沙箱隔离由 DSH 自己的 sandbox 提供，与本插件互补而非替代。
+
+### 适合谁
+
+| 场景 | 是否适合 |
+|---|---|
+| 你给了 Agent 完全权限，怕它无限试错烧 token | ✅ 正是为此 |
+| 你希望 Agent 在做满 N 次写操作后主动问你 | ✅ |
+| 你希望 `read` / `grep` / 联网查**完全不被打断** | ✅ 非持久化永不计数 |
+| 你想用它当沙箱、防住恶意模型 | ❌ 用 DSH 自带 sandbox |
+| 你用的是别的 Agent 框架 | ❌ 这是 DSH 插件 |
 
 ---
 
@@ -27,24 +38,48 @@
 每轮对话开始，计数归零
         │
         ▼
-   持久化操作 +1
+  用户消息含 confirmWord ?
         │
-   ┌────┴────┬──────────┬──────────┐
-   │         │          │          │
- 1..free   free+1..    >= hard   （非持久化）
-   │      hard-1        │          │
-   ▼         ▼          ▼          ▼
- 放行      放行         ask      永不计数
-+提醒    +【指令】    索要confirm
+   ┌────┴─────┐
+  是          否
+   │           │
+   ▼           ▼
+整轮放行   持久化操作 +1
+不计数          │
+不提醒     ┌────┴────┬──────────┬──────────┐
+   │       │         │          │          │
+   │     1..free   free+1..    >= hard   （非持久化）
+   │       │      hard-1        │          │
+   │       ▼         ▼          ▼          ▼
+   │     放行      放行         ask      永不计数
+   │    +提醒    +【指令】    索要confirm
+   └─────────┴─────────┴──────────┘
 ```
 
 | 档位 | 行为 |
 |---|---|
+| **消息含 `confirmWord`** | **本轮整轮放行**：不计数、不提醒、不拦 |
 | `1 ~ freeLimit` | 放行，注入提醒 |
 | `freeLimit+1 ~ hardLimit-1` | 放行，注入**指令：立即停止** |
 | `>= hardLimit` | 返回 `{ kind: 'ask' }`，走审批通道索要 confirm |
 
-**非持久化操作（读文件、搜索、列目录、查状态）永不计数、永不提醒、永不拦截。**
+**非持久化操作（读文件、搜索、列目录、查状态、只读命令）永不计数、永不提醒、永不拦截。**
+
+### 含 confirm 即放行整轮
+
+判据是**消息里出现 `confirmWord` 即可**，不要求整句就是它。
+
+| 用户消息 | 结果 |
+|---|---|
+| `confirm` | ✅ 放行 |
+| `confirm，可以开始` | ✅ 放行 |
+| `好的我同意 confirm 你去吧` | ✅ 放行 |
+| `CONFIRM` | ✅ 放行（大小写不敏感） |
+| `帮我看看这个` | ❌ 不放行，正常计数 |
+
+**放行是整轮的**：一旦命中，本轮剩余所有持久化操作都不计数、不提醒、不拦截。下一条不含识别语的消息到达后，恢复计数。
+
+设计理由：confirm 是对**一件事**的授权，不是对**一次操作**的授权。按笔确认会让模型每敲一条命令就回来问一遍，把一次执行切成十次中断。
 
 ---
 
@@ -84,15 +119,13 @@
 | `include` | `[]` | 只统计匹配的工具名（支持 `*` 通配）。空=全统计 |
 | `exclude` | `[]` | 排除匹配的工具名 |
 | `resetOnUserMessage` | `true` | 收到新的用户消息是否重置计数 |
-| `resetOnConfirm` | `false` | **用户只回一句确认时，是否重置计数** |
+| `resetOnConfirm` | `false` | 兼容旧行为：是否把「仅一句确认」当作新一轮重置点。**新逻辑下无需开启** |
 
-### `resetOnConfirm` 为什么默认是 `false`
+### 关于 `resetOnConfirm`
 
-如果用户回一句 `confirm` 也算「新一轮」，那**确认一次就能再白拿一整个额度**，硬上限形同虚设。
+早期版本里，用户回一句 `confirm` 只意味着「不重置」，确认完之后额度照样要重新数——于是确认一次只是一次中断的开始。
 
-默认只认「带内容的新任务」为重置点；单纯一句 `confirm`（前后允许引号、标点、空白）不算。
-
-想要旧行为，设 `true`。
+现在改成**含识别语即整轮放行**，`resetOnConfirm` 保留只为兼容旧配置。除非你明确要「确认后重新给一整轮额度」的旧行为，否则不用动它。
 
 ### 配置示例
 
@@ -114,19 +147,45 @@
 
 判定口径：**动作结束后，外部世界是否被改变。**
 
+### 4.1 按工具名判定
+
 | 类别 | 工具示例 | 算不算 |
 |---|---|---|
 | 读文件、列目录、搜索、查状态 | `read` `grep` `glob` `ls` `job-list` | ❌ |
 | 只改会话内进度 | `todo-write` | ❌ |
 | 联网读 | `web-fetch` `web-search` | ❌ |
 | 写文件 | `write` `edit` `str-replace` `apply-patch` | ✅ |
-| 执行命令 | `pwsh` `bash` `terminal` `exec` `process` | ✅ |
 | 派发 | `subagent` `subagent-fork` `workflow` | ✅ |
 | 外发 | `message-send` `webhook-dispatch` | ✅ |
 
 **后缀兜底**：工具名以 `write` / `edit` / `delete` / `remove` / `move` / `publish` / `deploy` / `commit` / `push` 结尾的，一律按持久化处理，用于兜住以后新增的工具。
 
 **未知工具默认判为非持久化**（不拦）。想反过来，用 `include` 限定范围。
+
+### 4.2 命令类工具按**命令内容**判定
+
+`pwsh` / `bash` 这类工具不再一律计数，而是看**命令本身是不是只读**。
+
+`exec.arguments.command` 落在只读白名单里 → 不计数；否则计数。
+
+| 命令 | 算不算 |
+|---|---|
+| `Get-ChildItem E:\x` | ❌ 只读 |
+| `Get-Content a.txt -Raw` | ❌ 只读 |
+| `Get-ChildItem \| Select-Object Name` | ❌ 只读（管道全在白名单） |
+| `Get-Item x; Remove-Item y` | ✅ 混进写命令 |
+| `Set-Content a.txt "x"` | ✅ |
+| `Get-ChildItem > out.txt` | ✅ 重定向 |
+| `git status` | ✅ 外部程序 |
+| `& "C:\a.exe"` | ✅ 外调 |
+
+**只读白名单**（只比命令名，不做 PowerShell 语法解析）：
+
+`Get-ChildItem` `Get-Item` `Get-Content` `Test-Path` `Resolve-Path` `Split-Path` `Join-Path` `Get-Location` `Get-Date` `Get-Process` `Get-CimInstance` `Get-Service` `Get-Command` `Get-Module` `Get-Variable` `Get-ItemProperty` `Get-FileHash` `Get-Acl` `Get-PSDrive` `Get-Member` `Select-Object` `Where-Object` `ForEach-Object` `Sort-Object` `Group-Object` `Measure-Object` `Select-String` `Compare-Object` `Get-Unique` `Format-Table` `Format-List` `Format-Wide` `Out-String` `Out-Host` `Out-Null` `Write-Output` `Write-Host` `Write-Verbose` `Write-Warning` `Set-Location` `Push-Location` `Pop-Location` `Start-Sleep`
+
+**一律计数**：重定向 `>` `>>` `<`、`Out-File` `Set-Content` `Add-Content` `New-Item` `Remove-Item` `Copy-Item` `Move-Item` `Rename-Item`、`Invoke-Expression`/`iex`、`Start-Process`、`&` 外调、`git` `node` `python` `npm` `pnpm` `cmd`。
+
+**取舍说明**：这不是语法解析器，是**名字比对**。所以 `Get-ChildItem $p.GetFiles()` 这种链式调用会被判成持久化（命中了 `&` 规则之外的方法调用）。**判错的代价是多计一次，不是漏拦**——这个方向是故意的。
 
 ---
 
@@ -262,7 +321,7 @@ registered agent/pre-step -> disposer=function
 
 ## 八、实测记录
 
-真机测试（`freeLimit=10` / `hardLimit=15` / `confirmWord=confirm`）：
+### 8.1 计数分档（真机，`freeLimit=10` / `hardLimit=15` / `confirmWord=confirm`）
 
 | 次数 | 实际注入文本 |
 |---|---|
@@ -272,6 +331,39 @@ registered agent/pre-step -> disposer=function
 | **11** | `指令：立即停止所有无 confirm 的持久化操作。…（识别语：confirm；本轮第 11/15 次持久化：pwsh）` |
 
 **关键观察**：第 11 次收到指令后，模型主动停手并索要 confirm——**框架设计目标达成**。
+
+### 8.2 命令级判定（`exec` 结构实测）
+
+通过模块探针抓到的真实结构（DSH `0.2.0-rc.2`）：
+
+```json
+{
+  "keys": ["token","callId","rootCallId","name","signal","agent","deferContext","concludeTurn","arguments"],
+  "name": "pwsh",
+  "argsKeys": ["command","description"],
+  "arguments": { "command": "Write-Output \"hi\"", "description": "..." }
+}
+```
+
+**关键点**：参数在 `exec.arguments`（不是 `params`），且经 `snapshotJsonValue` 深拷贝 + `deepFreeze` 冻结——插件读它是安全的，改不动它。
+
+命令判定单测（16 项）：
+
+| 命令 | 判定 |
+|---|---|
+| `Get-ChildItem E:\SRoada -Force` | 只读 ✅ |
+| `Get-ChildItem \| Select-Object Name` | 只读 ✅ |
+| `$x = Get-Date; Write-Output $x` | 只读 ✅ |
+| `Get-Item x; Remove-Item y` | 持久化 ✅ |
+| `Get-ChildItem > out.txt` | 持久化 ✅ |
+| `git status` | 持久化 ✅ |
+| `& "C:\a.exe"` | 持久化 ✅ |
+
+**16/16 通过。**
+
+### 8.3 含 confirm 放行整轮
+
+离线集成测试（18 项全过）覆盖：放行后连续 30 次持久化操作不拦、不提醒；句中任意位置含识别语都生效；大写 `DADA` 生效；不含识别语的消息撤销放行并恢复计数。
 
 ---
 
@@ -284,10 +376,12 @@ registered agent/pre-step -> disposer=function
 
 **设计上的限制：**
 
-1. **一次工具调用算 1 次**，不管里面执行多少条命令。`pwsh` 一次跑 10 条命令只计 1 次。
+1. **一次工具调用算 1 次**，不管里面执行多少条命令。
 2. **`ask` 的弹框位置取决于应答者。** 当前是 Web GUI，**手机收不到**，除非手机能访问 DSH 地址。
 3. **`subagent` 算在主 agent 头上**，子代理内部的操作不单独计。
 4. **不是安全边界。** 模型如果刻意绕过（比如在 `pwsh` 里用原生命令批量改文件），计数器只会记 1 次。**它防的是无意识的烧 token，不是恶意突破。**
+5. **命令判定是名字比对，不是语法解析。** 拿不准的一律判持久化——**只多计，不漏拦**。
+6. **含识别语即整轮放行是粗粒度的。** 如果用户在讨论时说「我觉得 confirm 这个逻辑有问题」，也会触发放行。这是刻意选的简单规则：把歧义交给用户措辞，而不是让插件猜意图。
 
 ---
 

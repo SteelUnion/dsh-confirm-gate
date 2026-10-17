@@ -104,19 +104,54 @@ async function main() {
   console.log(`  真实任务后 write 决策=${afterReset?.kind ?? 'accept'}`);
   check('真实新任务重置计数', afterReset?.kind ?? 'accept', 'accept');
 
-  console.log('\n--- 只回一句确认时，计数应保留（resetOnConfirm 默认 false）---');
-  // 先推到 ask 档：freeLimit=3, hardLimit=5
+  console.log('\n--- 含识别语即放行整轮（不计数、不提醒、不拦）---');
+  // 先把计数推到 ask 档：freeLimit=3, hardLimit=5
   for (let i = 0; i < 5; i++) await runTool('write');
   const beforeConfirm = await runTool('write');
   check('耗尽后为 ask', beforeConfirm?.kind, 'ask');
+
   await confirmTurn('dada'); // 只回识别语
   const afterConfirmOnly = await runTool('write');
-  check('仅确认不重置，仍为 ask', afterConfirmOnly?.kind, 'ask');
+  check('仅确认后放行', afterConfirmOnly?.kind ?? 'accept', 'accept');
 
-  console.log('\n--- 带内容的确认语句不应被误判为「仅确认」---');
-  await confirmTurn('dada，顺便把这个也改了'); // 含识别语但有其他内容
+  // 连续大量持久化操作，全部应放行且无提醒
+  const burst = [];
+  for (let i = 0; i < 30; i++) {
+    burst.push(await runTool('write'));
+    await runPost('write');
+  }
+  const burstKinds = burst.map((d) => d?.kind ?? 'accept');
+  check('放行后 30 次均不拦', burstKinds.every((k) => k !== 'ask'), true);
+  const burstPost = await runPost('write');
+  check('放行后无提醒注入', burstPost, undefined);
+
+  console.log('\n--- 含识别语但带其他文字，同样放行（包含判定）---');
+  await taskTurn('随便写点'); // 先回到计数模式
+  for (let i = 0; i < 5; i++) await runTool('write');
+  check('回到计数模式后仍会 ask', (await runTool('write'))?.kind, 'ask');
+  await confirmTurn('dada，顺便把这个也改了');
   const afterMixed = await runTool('write');
-  check('含其他内容视为新任务，回到额度内', afterMixed?.kind ?? 'accept', 'accept');
+  check('带内容的确认同样放行', afterMixed?.kind ?? 'accept', 'accept');
+
+  console.log('\n--- 识别语出现在句中任意位置都算 ---');
+  await taskTurn('随便写点');
+  for (let i = 0; i < 5; i++) await runTool('write');
+  await confirmTurn('好的我同意 dada 你去吧');
+  const afterMid = await runTool('write');
+  check('句中出现识别语也放行', afterMid?.kind ?? 'accept', 'accept');
+
+  console.log('\n--- 不含识别语的新消息撤销放行 ---');
+  await taskTurn('换个任务');
+  for (let i = 0; i < 5; i++) await runTool('write');
+  const afterRevoke = await runTool('write');
+  check('不含识别语后恢复计数', afterRevoke?.kind, 'ask');
+
+  console.log('\n--- 大小写不敏感 ---');
+  await taskTurn('随便写点');
+  for (let i = 0; i < 5; i++) await runTool('write');
+  await confirmTurn('DADA');
+  const afterUpper = await runTool('write');
+  check('大写识别语同样放行', afterUpper?.kind ?? 'accept', 'accept');
 
   console.log('\n--- 分类函数 ---');
   check('read 非持久化', isPersistent('read'), false);
