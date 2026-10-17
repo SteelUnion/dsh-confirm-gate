@@ -182,10 +182,24 @@ const result = runtime.Config['~standard'].validate(config);     // 有 → 必�
 ## 六、安装
 
 ```powershell
-dsh plugin --profile <desktop|web> add file:E:/SRoada/confirm-gate
+# <插件目录> 换成你 clone 下来的路径
+dsh plugin --profile <desktop|web> add file:<插件目录>
 ```
 
 **`file:` 是复制，不是链接。改代码后必须 `remove` + `add` 才会更新。**
+
+### 换台机器要改什么
+
+**插件本身零配置，即装即用。** 代码里没有任何绝对路径，探针日志走系统临时目录，确认语和阈值全走默认值。
+
+需要你在**新机器**上做的只有两件事，都在 DSH 侧，不在插件里：
+
+| 要改的 | 在哪 | 改成什么 |
+|---|---|---|
+| `--profile` 名 | 安装命令 | 用新机器 GUI 实际读的那个（先查进程命令行，见下） |
+| `approval` | 新机器 profile 的 `cordis.patch.yml` | `ask`（否则超限时 `ask` 会被拒成 `deny`） |
+
+想改阈值/文案，同样是改 profile 的 `cordis.patch.yml`，不用动插件源码。
 
 ### ⚠️ 最容易踩的坑：装错 profile
 
@@ -229,7 +243,7 @@ Get-CimInstance Win32_Process -Filter "Name='DeepSeek Harness.exe'" | Select Com
 const DEBUG_PROBE = false;   // 改成 true
 ```
 
-改成 `true`、重装、重启后，`C:\Users\Administrator\confirm-gate-boot.log` 会记录：
+改成 `true`、重装、重启后，**系统临时目录**下的 `confirm-gate-boot.log` 会记录（Windows 是 `%TEMP%`，Linux/macOS 是 `$TMPDIR` 或 `/tmp`）：
 
 ```
 module imported
