@@ -1,0 +1,44 @@
+{
+  "name": "@sroada/dsh-confirm-gate",
+  "version": "0.1.0",
+  "description": "Bounded-run framework for DeepSeek Harness: per-turn persistent-operation counter that reminds, then instructs the model to stop, then asks the user for confirmation.",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "agent",
+    "guard",
+    "confirm",
+    "budget"
+  ],
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node test/integration.mjs"
+  },
+  "dependencies": {},
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "license": "MIT",
+  "author": "SRoada",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SteelUnion/dsh-confirm-gate.git"
+  }
+}

@@ -1,0 +1,12 @@
+# confirm-gate 的默认挂载声明。
+#
+# 这个文件会被 dsh plugin 机制并入 profile 的补丁层。
+# 用户在 ~/.dsh/profiles/web/cordis.patch.yml 里写的同名条目优先级更高，
+# 因此想调 freeLimit / hardLimit / confirmWord，改那边，不用改这里。
+- insert:
+    - id: confirm-gate
+      name: '@sroada/dsh-confirm-gate'
+      config:
+        freeLimit: 10
+        hardLimit: 15
+        confirmWord: confirm
