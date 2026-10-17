@@ -18,14 +18,23 @@ The plugin decides, **on every tool call**, whether it should be counting. The m
 
 That distinction matters: judged from the default alone, switching into a sandbox and back would leave the plugin reading the value it saw at startup, forever.
 
+Both reads go through `ctx.get(name)`, never `ctx.shell` directly. cordis resolves dependencies lazily, so touching an undeclared service property throws an inject-gate error — and an exception on that path once made the plugin silently do nothing at all. Soft probing cannot throw.
+
 | Sandbox mode | Plugin counts? | Why |
 |---|---|---|
 | `read-only` | ❌ No | The sandbox already holds every boundary |
 | `workspace-write` | ❌ No | Same |
 | `danger-full-access` | ✅ Yes | Nothing is holding the boundary |
 | `custom` | ✅ Yes | A custom mix still leaves the boundary unheld |
-| `undefined` (executor does not confine) | ✅ Yes | Same |
-| Unreadable (both sources threw) | ❌ No | Conservative: assume something else is managing it |
+| `undefined` / no shell service | ✅ Yes | This executor does not confine |
+| **Unreadable (both sources threw)** | ✅ Yes | **Fail open: a silent no-op is worse than an extra reminder** |
+
+That last row is deliberate. This plugin is an accounting tool, not a security boundary, so the two failure modes are not symmetric:
+
+- counting when it shouldn't → a spurious reminder, immediately visible and fixable
+- staying silent when it shouldn't → **the plugin appears installed but does nothing**, and nothing in the logs looks wrong
+
+The second is far worse, so any mode it cannot read counts as "not sandboxed".
 
 Put plainly: **under a sandbox this plugin would be redundant — and worse, it would interrupt legitimate operations a second time.** So it steps aside wherever something else is already keeping score.
 

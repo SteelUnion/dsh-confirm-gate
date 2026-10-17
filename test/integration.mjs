@@ -170,22 +170,45 @@ async function main() {
      *   projectionsMode  → sessionProjections.stateOf(...).sandbox（当前值）
      *   用 '__THROW__' 让对应 getter 抛错，'__NONE__' 让它不存在。
      */
+    /**
+     * 造一个假 ctx。
+     *
+     * 关键：用 `get(name)` **软探测**，和真实 DSH 一致 ——
+     * cordis 的依赖注入是惰性的，直接读 `ctx.shell` 会抛注入门错误，
+     * 插件必须走 `ctx.get('shell')`。曾经的 bug 就是因为直接读属性抛错，
+     * 被保守逻辑吞成了「永远不生效」。
+     *
+     * @param state - { shellMode, projectionsMode }
+     *   shellMode        → shell.sandboxMode（executor 默认值）
+     *   projectionsMode  → sessionProjections.stateOf(...).sandbox（会话当前值）
+     *   '__THROW__' 让对应取用抛错；'__NONE__' 让它不存在。
+     */
     const mk = (state) => {
       const h = {};
-      const c = {
-        on(e, f) { h[e] = f; },
+      const services = {
         get shell() {
           if (state.shellMode === '__THROW__') throw new Error('inject gate');
           return state.shellMode === '__NONE__' ? undefined : { sandboxMode: state.shellMode };
         },
         get sessionProjections() {
+          if (state.projectionsMode === '__THROW__') throw new Error('inject gate');
           if (state.projectionsMode === '__NONE__') return undefined;
           return {
             stateOf() {
-              if (state.projectionsMode === '__THROW__') throw new Error('projection missing');
               return state.projectionsMode === undefined ? undefined : { sandbox: state.projectionsMode };
             },
           };
+        },
+      };
+      const c = {
+        on(e, f) { h[e] = f; },
+        // 软探测入口：拿不到返回 undefined，不抛
+        get(name) {
+          try {
+            return services[name];
+          } catch {
+            return undefined;
+          }
         },
       };
       apply(c, { freeLimit: 1, hardLimit: 2, confirmWord: 'dada' });
@@ -223,8 +246,8 @@ async function main() {
     // 反方向：默认沙盒，会话切回完全权限 → 应立刻生效
     check('热切换：默认沙盒 + 会话全权 → 生效', await activeByDecision({ shellMode: 'workspace-write', projectionsMode: 'danger-full-access' }), true);
 
-    // 两个数据源都读不到 → 保守不生效
-    check('投影与 shell 都抛错 → 保守不生效', await activeByDecision({ shellMode: '__THROW__', projectionsMode: '__THROW__' }), false);
+    // 两个数据源都读不到 → 倾向于生效（静默失效比多提醒更难排查）
+    check('两个数据源都抛错 → 仍生效', await activeByDecision({ shellMode: '__THROW__', projectionsMode: '__THROW__' }), true);
   }
 
   const failed = results.filter((r) => !r.ok);
