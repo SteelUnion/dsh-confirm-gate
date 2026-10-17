@@ -9,33 +9,42 @@ A runtime plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-
 > **This is not a security boundary. It is a cost boundary and a course-correction mechanism.**
 > It assumes the agent is running **without a sandbox holding the boundary**, and its purpose is to give the model **the ability to brake on its own** before it burns tokens or rewrites files. Real sandbox isolation is provided by DSH's own sandbox — complementary to this plugin, not a replacement.
 
-### Scope: it does not activate under a sandbox
+### Scope: it stays silent under a sandbox
 
-The plugin gates itself by the deployment's sandbox mode, read from `ctx.shell.sandboxMode`:
+The plugin decides, **on every tool call**, whether it should be counting. The mode comes from two sources, in priority order:
 
-| Sandbox mode | Plugin active? | Why |
+1. `ctx.sessionProjections.stateOf(session, 'permissions').sandbox` — the session's **current** knob value. This is what changes when you hot-switch modes mid-conversation.
+2. `ctx.shell.sandboxMode` — the executor's **default** mode. Its own documentation calls it "the sandbox mode this executor applies by default"; it does **not** follow a hot switch, so it is only a fallback.
+
+That distinction matters: judged from the default alone, switching into a sandbox and back would leave the plugin reading the value it saw at startup, forever.
+
+| Sandbox mode | Plugin counts? | Why |
 |---|---|---|
 | `read-only` | ❌ No | The sandbox already holds every boundary |
 | `workspace-write` | ❌ No | Same |
 | `danger-full-access` | ✅ Yes | Nothing is holding the boundary |
 | `custom` | ✅ Yes | A custom mix still leaves the boundary unheld |
 | `undefined` (executor does not confine) | ✅ Yes | Same |
-| Unreadable (`ctx` threw) | ❌ No | Conservative: assume something else is managing it |
+| Unreadable (both sources threw) | ❌ No | Conservative: assume something else is managing it |
 
-Put plainly: **under a sandbox this plugin would be redundant — and worse, it would interrupt legitimate operations a second time.** So it only installs itself where nothing else is keeping score. If a preset switching the session into a sandbox does not take effect until restart, that is by design — the gate decision is made once, at load.
+Put plainly: **under a sandbox this plugin would be redundant — and worse, it would interrupt legitimate operations a second time.** So it steps aside wherever something else is already keeping score.
 
-> ### ⚠️ Status of sandbox and read-only support: **implemented but UNTESTED**
+Hooks are always registered; the decision is per call. That is what makes hot-switching work: move the session into a sandbox and the gate goes quiet on the very next call; move it back and counting resumes. No restart needed.
+
+> ### ✅ Status: verified on a real machine
 >
-> This plugin was built for, and has only ever been verified under,
-> **`danger-full-access`** — that is the default and the supported configuration.
+> All three modes were exercised by hand on Windows, DSH `0.2.0-rc.2`, with the
+> session's permission mode switched live between runs:
 >
-> The auto-disable logic for `read-only` and `workspace-write` is in the code and
-> covered by unit tests against a simulated `ctx`, but **it has not been exercised
-> on a real machine**. Treat it as a prepared feature, not a validated one:
-> **test it on your own device before relying on it.**
+> | Mode | Write a file | `pwsh` | Gate counted? |
+> |---|---|---|---|
+> | `danger-full-access` | ✅ succeeds | ✅ runs | ✅ counts |
+> | `workspace-write` | ✅ succeeds | ❌ fails with `0xC0000142` | ❌ silent |
+> | `read-only` | ❌ sandbox denies | ✅ runs | ❌ silent |
 >
-> If you do test it, a report either way is welcome — a negative result is just as
-> useful as a positive one.
+> The important part is the two "silent" rows: the sandbox rejected or confined
+> the operation and the gate said nothing — exactly the intended division of
+> labour. Counting resumes when the session returns to full permissions.
 
 ### Who this is for
 
@@ -400,7 +409,6 @@ Offline integration tests (18/18 passing) cover: 30 consecutive persistent opera
 
 **Not yet verified:**
 
-- **Sandbox and read-only auto-disable on a real machine** — the logic exists and unit tests pass against a simulated `ctx`, but it has never run under an actual `read-only` or `workspace-write` deployment. Test it on your own device before relying on it.
 - Actual behaviour in the `12 ~ 15` range
 - Whether `ask` actually surfaces an approval prompt at `>= 15` (requires `approval: ask` and a responder online)
 

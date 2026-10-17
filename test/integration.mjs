@@ -157,35 +157,74 @@ async function main() {
   check('read 非持久化', isPersistent('read'), false);
   check('write 持久化', isPersistent('write'), true);
 
-  // ---- 生效范围：只有被沙盒接管的模式才不挂 ----
-  console.log('\n--- 生效范围（沙箱模式门）---');
+  // ---- 生效范围：判定发生在每次调用，不是加载时 ----
+  //
+  // 语义变了：钩子总是挂上，「不生效」= 有钩子但直接放行、不计数。
+  // 这样热切换权限模式才能跟上。
+  console.log('\n--- 生效范围（每次调用现读模式）---');
   {
-    // 独立的假 ctx，带 shell.sandboxMode
-    const mk = (mode) => {
+    /**
+     * 造一个假 ctx。
+     * @param state - { shellMode, projectionsMode } 控制两个数据源。
+     *   shellMode        → ctx.shell.sandboxMode（默认值）
+     *   projectionsMode  → sessionProjections.stateOf(...).sandbox（当前值）
+     *   用 '__THROW__' 让对应 getter 抛错，'__NONE__' 让它不存在。
+     */
+    const mk = (state) => {
       const h = {};
       const c = {
         on(e, f) { h[e] = f; },
         get shell() {
-          if (mode === '__THROW__') throw new Error('inject gate');
-          return mode === '__NONE__' ? undefined : { sandboxMode: mode };
+          if (state.shellMode === '__THROW__') throw new Error('inject gate');
+          return state.shellMode === '__NONE__' ? undefined : { sandboxMode: state.shellMode };
+        },
+        get sessionProjections() {
+          if (state.projectionsMode === '__NONE__') return undefined;
+          return {
+            stateOf() {
+              if (state.projectionsMode === '__THROW__') throw new Error('projection missing');
+              return state.projectionsMode === undefined ? undefined : { sandbox: state.projectionsMode };
+            },
+          };
         },
       };
       apply(c, { freeLimit: 1, hardLimit: 2, confirmWord: 'dada' });
-      return typeof h['tools/pre-execute'] === 'function';
+      return h;
     };
 
-    // 没人管 → 挂
-    check('danger-full-access 生效', mk('danger-full-access'), true);
-    check('custom 生效', mk('custom'), true);
-    check('sandboxMode undefined 生效', mk(undefined), true);
-    check('无 shell 服务 生效', mk('__NONE__'), true);
+    /**
+     * 跑若干次 write，判断插件是否生效。
+     * freeLimit=1, hardLimit=2 → 生效时第 2 次必为 ask。
+     * 同一个 ctx 连续调用，避免每次 apply 重置计数。
+     */
+    const activeByDecision = async (state) => {
+      const h = mk(state);
+      const agent = { id: 'a', session: { id: 's' } };
+      let last;
+      for (let i = 0; i < 3; i++) {
+        last = await h['tools/pre-execute']({ name: 'write', agent, arguments: {} }, async () => ({ kind: 'accept' }));
+        if (last?.kind === 'ask') return true;
+      }
+      return false;
+    };
 
-    // 沙盒接管 → 不挂
-    check('workspace-write 不生效', mk('workspace-write'), false);
-    check('read-only 不生效', mk('read-only'), false);
+    // 会话值是当前值，优先于默认值
+    check('danger-full-access 生效', await activeByDecision({ shellMode: 'danger-full-access', projectionsMode: 'danger-full-access' }), true);
+    check('custom 生效', await activeByDecision({ shellMode: 'custom', projectionsMode: 'custom' }), true);
+    check('会话无投影 → 回落默认值仍生效', await activeByDecision({ shellMode: 'danger-full-access', projectionsMode: undefined }), true);
+    check('无 shell 服务 生效', await activeByDecision({ shellMode: '__NONE__', projectionsMode: '__NONE__' }), true);
 
-    // 读不到 → 保守不挂
-    check('读模式抛错 不生效', mk('__THROW__'), false);
+    // 沙盒接管 → 不生效
+    check('workspace-write 不生效', await activeByDecision({ shellMode: 'workspace-write', projectionsMode: 'workspace-write' }), false);
+    check('read-only 不生效', await activeByDecision({ shellMode: 'read-only', projectionsMode: 'read-only' }), false);
+
+    // **热切换**：默认值是完全权限，会话切到沙盒 → 应立刻不生效
+    check('热切换：默认全权 + 会话沙盒 → 不生效', await activeByDecision({ shellMode: 'danger-full-access', projectionsMode: 'workspace-write' }), false);
+    // 反方向：默认沙盒，会话切回完全权限 → 应立刻生效
+    check('热切换：默认沙盒 + 会话全权 → 生效', await activeByDecision({ shellMode: 'workspace-write', projectionsMode: 'danger-full-access' }), true);
+
+    // 两个数据源都读不到 → 保守不生效
+    check('投影与 shell 都抛错 → 保守不生效', await activeByDecision({ shellMode: '__THROW__', projectionsMode: '__THROW__' }), false);
   }
 
   const failed = results.filter((r) => !r.ok);
