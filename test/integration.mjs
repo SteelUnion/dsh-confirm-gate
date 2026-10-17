@@ -157,6 +157,37 @@ async function main() {
   check('read 非持久化', isPersistent('read'), false);
   check('write 持久化', isPersistent('write'), true);
 
+  // ---- 生效范围：只有被沙盒接管的模式才不挂 ----
+  console.log('\n--- 生效范围（沙箱模式门）---');
+  {
+    // 独立的假 ctx，带 shell.sandboxMode
+    const mk = (mode) => {
+      const h = {};
+      const c = {
+        on(e, f) { h[e] = f; },
+        get shell() {
+          if (mode === '__THROW__') throw new Error('inject gate');
+          return mode === '__NONE__' ? undefined : { sandboxMode: mode };
+        },
+      };
+      apply(c, { freeLimit: 1, hardLimit: 2, confirmWord: 'dada' });
+      return typeof h['tools/pre-execute'] === 'function';
+    };
+
+    // 没人管 → 挂
+    check('danger-full-access 生效', mk('danger-full-access'), true);
+    check('custom 生效', mk('custom'), true);
+    check('sandboxMode undefined 生效', mk(undefined), true);
+    check('无 shell 服务 生效', mk('__NONE__'), true);
+
+    // 沙盒接管 → 不挂
+    check('workspace-write 不生效', mk('workspace-write'), false);
+    check('read-only 不生效', mk('read-only'), false);
+
+    // 读不到 → 保守不挂
+    check('读模式抛错 不生效', mk('__THROW__'), false);
+  }
+
   const failed = results.filter((r) => !r.ok);
   console.log(`\n===== ${failed.length === 0 ? 'ALL PASS' : failed.length + ' FAILED'} (${results.length} checks) =====`);
   process.exit(failed.length === 0 ? 0 : 1);

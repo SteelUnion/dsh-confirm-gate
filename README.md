@@ -7,7 +7,22 @@ English | [中文](README.zh-CN.md)
 A runtime plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). It keeps a **per-turn counter of persistent operations**, injects a stop instruction once the free budget is spent, and asks the user for confirmation at a hard limit.
 
 > **This is not a security boundary. It is a cost boundary and a course-correction mechanism.**
-> It assumes you have already granted the agent full permissions (`danger-full-access`), and its purpose is to give the model **the ability to brake on its own** before it burns tokens or rewrites files. Real sandbox isolation is provided by DSH's own sandbox — complementary to this plugin, not a replacement.
+> It assumes the agent is running **without a sandbox holding the boundary**, and its purpose is to give the model **the ability to brake on its own** before it burns tokens or rewrites files. Real sandbox isolation is provided by DSH's own sandbox — complementary to this plugin, not a replacement.
+
+### Scope: it does not activate under a sandbox
+
+The plugin gates itself by the deployment's sandbox mode, read from `ctx.shell.sandboxMode`:
+
+| Sandbox mode | Plugin active? | Why |
+|---|---|---|
+| `read-only` | ❌ No | The sandbox already holds every boundary |
+| `workspace-write` | ❌ No | Same |
+| `danger-full-access` | ✅ Yes | Nothing is holding the boundary |
+| `custom` | ✅ Yes | A custom mix still leaves the boundary unheld |
+| `undefined` (executor does not confine) | ✅ Yes | Same |
+| Unreadable (`ctx` threw) | ❌ No | Conservative: assume something else is managing it |
+
+Put plainly: **under a sandbox this plugin would be redundant — and worse, it would interrupt legitimate operations a second time.** So it only installs itself where nothing else is keeping score. If a preset switching the session into a sandbox does not take effect until restart, that is by design — the gate decision is made once, at load.
 
 ### Who this is for
 
