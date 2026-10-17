@@ -1,211 +1,212 @@
 # dsh-confirm-gate
 
-**在完全权限的主机上，让 AI Agent 可控运行的次数闸框架。**
-*A bounded-run confirm gate for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) — count persistent operations per turn, instruct the model to stop, then ask the user.*
+**A bounded-run framework that keeps an AI agent accountable on hosts where you had to grant full permissions.**
 
-给 DeepSeek Harness (DSH) 用的运行时插件。提供**每轮对话独立的持久化操作计数器**，在免确认额度用尽后向模型注入停止指令，达到硬上限时索要用户 confirm。
+English | [中文](README.zh-CN.md)
 
-> **这不是安全边界，是成本边界和方向纠偏机制。**
-> 它假设你已经给了 Agent 完全权限（`danger-full-access`），目的是让模型在烧 token 和乱改文件之前**有能力自己刹车**。真正的沙箱隔离由 DSH 自己的 sandbox 提供，与本插件互补而非替代。
+A runtime plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). It keeps a **per-turn counter of persistent operations**, injects a stop instruction once the free budget is spent, and asks the user for confirmation at a hard limit.
 
-### 适合谁
+> **This is not a security boundary. It is a cost boundary and a course-correction mechanism.**
+> It assumes you have already granted the agent full permissions (`danger-full-access`), and its purpose is to give the model **the ability to brake on its own** before it burns tokens or rewrites files. Real sandbox isolation is provided by DSH's own sandbox — complementary to this plugin, not a replacement.
 
-| 场景 | 是否适合 |
+### Who this is for
+
+| Situation | Fits? |
 |---|---|
-| 你给了 Agent 完全权限，怕它无限试错烧 token | ✅ 正是为此 |
-| 你希望 Agent 在做满 N 次写操作后主动问你 | ✅ |
-| 你希望 `read` / `grep` / 联网查**完全不被打断** | ✅ 非持久化永不计数 |
-| 你想用它当沙箱、防住恶意模型 | ❌ 用 DSH 自带 sandbox |
-| 你用的是别的 Agent 框架 | ❌ 这是 DSH 插件 |
+| You granted full permissions and fear unbounded trial-and-error burning tokens | ✅ That is exactly the case |
+| You want the agent to ask after N write operations | ✅ |
+| You want `read` / `grep` / web lookups **never interrupted** | ✅ Non-persistent operations are never counted |
+| You want to use it as a sandbox against a malicious model | ❌ Use DSH's built-in sandbox |
+| You use a different agent framework | ❌ This is a DSH plugin |
 
 ---
 
-## 一、设计思路
+## 1. Design rationale
 
-给 Agent 完全权限是必要的——沙箱会让 `pwsh` 这类工具直接崩掉（见[附录](#十附录为什么需要完全权限)）。但完全权限意味着**没有任何东西拦得住它**。
+Granting full permissions is unavoidable — a sandbox makes tools like `pwsh` fail outright (see [Appendix](#10-appendix-why-full-permissions-are-needed)). But full permissions mean **nothing is holding the agent back**.
 
-这个插件的假设是：
+The premise of this plugin:
 
-> **不给硬墙，给计数器和刹车信号。**
+> **Do not build a hard wall. Provide a counter and a brake signal.**
 
-因为实测发现：模型在收到明确的「立即停止」指令后会停手（见[实测记录](#八实测记录)）。所以不必在第一次就越权拦住，只要**把额度标上刻度**，模型自己会算。
+Empirically, the model stops when it receives an explicit "stop now" instruction (see [Field results](#8-field-results)). So there is no need to block it preemptively; you only need to **put ticks on the budget**, and the model will do the arithmetic itself.
 
 ---
 
-## 二、三档行为
+## 2. Three tiers
 
 ```
-每轮对话开始，计数归零
+New turn, counter reset to zero
         │
         ▼
-  用户消息含 confirmWord ?
+  Does the user message contain confirmWord?
         │
    ┌────┴─────┐
-  是          否
+  yes          no
    │           │
    ▼           ▼
-整轮放行   持久化操作 +1
-不计数          │
-不提醒     ┌────┴────┬──────────┬──────────┐
-   │       │         │          │          │
-   │     1..free   free+1..    >= hard   （非持久化）
-   │       │      hard-1        │          │
-   │       ▼         ▼          ▼          ▼
-   │     放行      放行         ask      永不计数
-   │    +提醒    +【指令】    索要confirm
+release the   persistent operation +1
+whole turn         │
+(no count,   ┌────┴────┬──────────┬──────────┐
+ no remind)  │         │          │          │
+   │       1..free  free+1..    >= hard   (non-persistent)
+   │         │      hard-1        │          │
+   │         ▼         ▼          ▼          ▼
+   │       allow     allow       ask      never counted
+   │     +reminder +[STOP]   ask for confirm
    └─────────┴─────────┴──────────┘
 ```
 
-| 档位 | 行为 |
+| Tier | Behaviour |
 |---|---|
-| **消息含 `confirmWord`** | **本轮整轮放行**：不计数、不提醒、不拦 |
-| `1 ~ freeLimit` | 放行，注入提醒 |
-| `freeLimit+1 ~ hardLimit-1` | 放行，注入**指令：立即停止** |
-| `>= hardLimit` | 返回 `{ kind: 'ask' }`，走审批通道索要 confirm |
+| **Message contains `confirmWord`** | **The whole turn is released**: no counting, no reminders, no blocking |
+| `1 ~ freeLimit` | Allowed, reminder injected |
+| `freeLimit+1 ~ hardLimit-1` | Allowed, **STOP instruction** injected |
+| `>= hardLimit` | Returns `{ kind: 'ask' }` and requests confirmation through the approval channel |
 
-**非持久化操作（读文件、搜索、列目录、查状态、只读命令）永不计数、永不提醒、永不拦截。**
+**Non-persistent operations (reading files, searching, listing directories, checking status, read-only commands) are never counted, never reminded about, and never blocked.**
 
-### 含 confirm 即放行整轮
+### Containing the word releases the whole turn
 
-判据是**消息里出现 `confirmWord` 即可**，不要求整句就是它。
+The test is **whether `confirmWord` appears in the message at all** — it does not have to be the entire message.
 
-| 用户消息 | 结果 |
+| User message | Result |
 |---|---|
-| `confirm` | ✅ 放行 |
-| `confirm，可以开始` | ✅ 放行 |
-| `好的我同意 confirm 你去吧` | ✅ 放行 |
-| `CONFIRM` | ✅ 放行（大小写不敏感） |
-| `帮我看看这个` | ❌ 不放行，正常计数 |
+| `confirm` | ✅ Released |
+| `confirm, go ahead` | ✅ Released |
+| `ok I agree, confirm, go for it` | ✅ Released |
+| `CONFIRM` | ✅ Released (case-insensitive) |
+| `take a look at this for me` | ❌ Not released; normal counting |
 
-**放行是整轮的**：一旦命中，本轮剩余所有持久化操作都不计数、不提醒、不拦截。下一条不含识别语的消息到达后，恢复计数。
+**Release applies to the whole turn**: once matched, every remaining persistent operation in that turn is uncounted, unreminded, and unblocked. Counting resumes when a message without the word arrives.
 
-设计理由：confirm 是对**一件事**的授权，不是对**一次操作**的授权。按笔确认会让模型每敲一条命令就回来问一遍，把一次执行切成十次中断。
+The reasoning: a confirmation authorizes **a task**, not **a single operation**. Counting per operation forces the model to come back and ask after every command, cutting one execution into ten interruptions.
 
 ---
 
-## 三、这个框架能调什么
+## 3. What this framework lets you tune
 
-**所有参数都可调，没有写死的。** 配置写在 profile 的 `cordis.patch.yml`。
+**Everything is configurable; nothing is hard-coded.** Configuration lives in the profile's `cordis.patch.yml`.
 
-### 数值
+### Numbers
 
-| 参数 | 默认 | 含义 | 极端配置的效果 |
+| Parameter | Default | Meaning | Effect of an extreme value |
 |---|---|---|---|
-| `freeLimit` | `10` | 免确认额度 | 设 `0` → 第 1 次就进指令档 |
-| `hardLimit` | `15` | 硬上限，达到即索要 confirm | 设 `1` → 第 1 次就要 confirm |
+| `freeLimit` | `10` | Operations allowed without confirmation | `0` → the first operation already enters the instruction tier |
+| `hardLimit` | `15` | Hard limit; confirmation requested on reaching it | `1` → confirmation requested on the first operation |
 
-**约束**：`hardLimit > freeLimit`，否则抛错。
+**Constraint**: `hardLimit > freeLimit`, otherwise an error is thrown.
 
-### 识别语
+### The trigger word
 
-| 参数 | 默认 | 说明 |
+| Parameter | Default | Description |
 |---|---|---|
-| `confirmWord` | `confirm` | 用户确认用的词。注入文本与弹框理由都会带上它 |
+| `confirmWord` | `confirm` | The word the user confirms with. It appears in injected text and in the approval reason |
 
-改这个就能换一套确认语，比如 `dada`、`go`、`批准`。
+Change it to switch the whole confirmation vocabulary — `dada`, `go`, `approved`, anything.
 
-### 文案
+### Text
 
-| 参数 | 默认 |
+| Parameter | Default |
 |---|---|
-| `reminderText` | `警告，无confirm持久化操作。请向用户索要confirm。` |
-| `warningText` | `指令：立即停止所有无 confirm 的持久化操作。不得再执行写入、改文件、执行命令、派发子代理或外发。转而向用户汇报当前进展、缺口与方案，并索要 confirm。` |
-| `askReason` | `持久化操作次数已达上限，需要用户 confirm 才能继续。` |
+| `reminderText` | `Warning: persistent operation without confirm. Ask the user for confirm.` |
+| `warningText` | `Instruction: stop all persistent operations without confirm immediately. Do not perform further writes, file edits, command execution, subagent dispatch or outbound sends. Report current progress, gaps and options to the user instead, and ask for confirm.` |
+| `askReason` | `Persistent operation limit reached; user confirmation is required to continue.` |
 
-### 计数范围
+### Counting scope
 
-| 参数 | 默认 | 说明 |
+| Parameter | Default | Description |
 |---|---|---|
-| `include` | `[]` | 只统计匹配的工具名（支持 `*` 通配）。空=全统计 |
-| `exclude` | `[]` | 排除匹配的工具名 |
-| `resetOnUserMessage` | `true` | 收到新的用户消息是否重置计数 |
-| `resetOnConfirm` | `false` | 兼容旧行为：是否把「仅一句确认」当作新一轮重置点。**新逻辑下无需开启** |
+| `include` | `[]` | Only count tool names matching these (`*` wildcards supported). Empty = count all |
+| `exclude` | `[]` | Exclude matching tool names |
+| `resetOnUserMessage` | `true` | Whether a new user message resets the counter |
+| `resetOnConfirm` | `false` | Legacy: whether a bare confirmation counts as a reset point. **Not needed under the current logic** |
 
-### 关于 `resetOnConfirm`
+### About `resetOnConfirm`
 
-早期版本里，用户回一句 `confirm` 只意味着「不重置」，确认完之后额度照样要重新数——于是确认一次只是一次中断的开始。
+In earlier versions, replying `confirm` merely meant "do not reset", so the budget still had to be re-earned afterwards — one confirmation was only the start of another interruption.
 
-现在改成**含识别语即整轮放行**，`resetOnConfirm` 保留只为兼容旧配置。除非你明确要「确认后重新给一整轮额度」的旧行为，否则不用动它。
+It is now **released for the whole turn when the word appears**. `resetOnConfirm` is kept only for backwards compatibility. Unless you explicitly want the old "confirmation grants a fresh full budget" behaviour, leave it alone.
 
-### 配置示例
+### Example configuration
 
 ```yaml
-# ~/.dsh/profiles/<你的profile>/cordis.patch.yml
+# ~/.dsh/profiles/<your-profile>/cordis.patch.yml
 - insert:
     - id: confirm-gate
       name: "@sroada/dsh-confirm-gate"
       config:
-        freeLimit: 0          # 一次都不白给
+        freeLimit: 0          # give nothing away
         hardLimit: 3
-        confirmWord: 批准
-        warningText: 停。无批准不得动写操作，先汇报。
+        confirmWord: approved
+        warningText: Stop. No writes without approval — report first.
 ```
 
 ---
 
-## 四、什么算「持久化操作」
+## 4. What counts as a "persistent operation"
 
-判定口径：**动作结束后，外部世界是否被改变。**
+The test: **after the action completes, has the outside world changed?**
 
-### 4.1 按工具名判定
+### 4.1 Judged by tool name
 
-| 类别 | 工具示例 | 算不算 |
+| Category | Example tools | Counted? |
 |---|---|---|
-| 读文件、列目录、搜索、查状态 | `read` `grep` `glob` `ls` `job-list` | ❌ |
-| 只改会话内进度 | `todo-write` | ❌ |
-| 联网读 | `web-fetch` `web-search` | ❌ |
-| 写文件 | `write` `edit` `str-replace` `apply-patch` | ✅ |
-| 派发 | `subagent` `subagent-fork` `workflow` | ✅ |
-| 外发 | `message-send` `webhook-dispatch` | ✅ |
+| Reading files, listing, searching, checking status | `read` `grep` `glob` `ls` `job-list` | ❌ |
+| Session-only progress | `todo-write` | ❌ |
+| Network reads | `web-fetch` `web-search` | ❌ |
+| Writing files | `write` `edit` `str-replace` `apply-patch` | ✅ |
+| Dispatch | `subagent` `subagent-fork` `workflow` | ✅ |
+| Outbound | `message-send` `webhook-dispatch` | ✅ |
 
-**后缀兜底**：工具名以 `write` / `edit` / `delete` / `remove` / `move` / `publish` / `deploy` / `commit` / `push` 结尾的，一律按持久化处理，用于兜住以后新增的工具。
+**Suffix fallback**: tool names ending in `write` / `edit` / `delete` / `remove` / `move` / `publish` / `deploy` / `commit` / `push` are always treated as persistent, to catch tools added later.
 
-**未知工具默认判为非持久化**（不拦）。想反过来，用 `include` 限定范围。
+**Unknown tools default to non-persistent** (not blocked). To invert that, constrain the scope with `include`.
 
-### 4.2 命令类工具按**命令内容**判定
+### 4.2 Command tools are judged by **command content**
 
-`pwsh` / `bash` 这类工具不再一律计数，而是看**命令本身是不是只读**。
+`pwsh` / `bash` are no longer counted unconditionally — the plugin inspects **whether the command itself is read-only**.
 
-`exec.arguments.command` 落在只读白名单里 → 不计数；否则计数。
+If `exec.arguments.command` falls within the read-only whitelist → not counted; otherwise counted.
 
-| 命令 | 算不算 |
+| Command | Counted? |
 |---|---|
-| `Get-ChildItem E:\x` | ❌ 只读 |
-| `Get-Content a.txt -Raw` | ❌ 只读 |
-| `Get-ChildItem \| Select-Object Name` | ❌ 只读（管道全在白名单） |
-| `Get-Item x; Remove-Item y` | ✅ 混进写命令 |
+| `Get-ChildItem E:\x` | ❌ read-only |
+| `Get-Content a.txt -Raw` | ❌ read-only |
+| `Get-ChildItem \| Select-Object Name` | ❌ read-only (whole pipeline whitelisted) |
+| `Get-Item x; Remove-Item y` | ✅ a write command is mixed in |
 | `Set-Content a.txt "x"` | ✅ |
-| `Get-ChildItem > out.txt` | ✅ 重定向 |
-| `git status` | ✅ 外部程序 |
-| `& "C:\a.exe"` | ✅ 外调 |
+| `Get-ChildItem > out.txt` | ✅ redirection |
+| `git status` | ✅ external program |
+| `& "C:\a.exe"` | ✅ external invocation |
 
-**只读白名单**（只比命令名，不做 PowerShell 语法解析）：
+**Read-only whitelist** (command names only; no PowerShell parsing):
 
 `Get-ChildItem` `Get-Item` `Get-Content` `Test-Path` `Resolve-Path` `Split-Path` `Join-Path` `Get-Location` `Get-Date` `Get-Process` `Get-CimInstance` `Get-Service` `Get-Command` `Get-Module` `Get-Variable` `Get-ItemProperty` `Get-FileHash` `Get-Acl` `Get-PSDrive` `Get-Member` `Select-Object` `Where-Object` `ForEach-Object` `Sort-Object` `Group-Object` `Measure-Object` `Select-String` `Compare-Object` `Get-Unique` `Format-Table` `Format-List` `Format-Wide` `Out-String` `Out-Host` `Out-Null` `Write-Output` `Write-Host` `Write-Verbose` `Write-Warning` `Set-Location` `Push-Location` `Pop-Location` `Start-Sleep`
 
-**一律计数**：重定向 `>` `>>` `<`、`Out-File` `Set-Content` `Add-Content` `New-Item` `Remove-Item` `Copy-Item` `Move-Item` `Rename-Item`、`Invoke-Expression`/`iex`、`Start-Process`、`&` 外调、`git` `node` `python` `npm` `pnpm` `cmd`。
+**Always counted**: redirection `>` `>>` `<`, `Out-File` `Set-Content` `Add-Content` `New-Item` `Remove-Item` `Copy-Item` `Move-Item` `Rename-Item`, `Invoke-Expression`/`iex`, `Start-Process`, `&` invocation, `git` `node` `python` `npm` `pnpm` `cmd`.
 
-**取舍说明**：这不是语法解析器，是**名字比对**。所以 `Get-ChildItem $p.GetFiles()` 这种链式调用会被判成持久化（命中了 `&` 规则之外的方法调用）。**判错的代价是多计一次，不是漏拦**——这个方向是故意的。
+**On the trade-off**: this is not a parser, it is a **name comparison**. Hence a chained call such as `Get-ChildItem $p.GetFiles()` is treated as persistent. **The cost of a wrong judgement is one extra count, never a missed block** — that direction is deliberate.
 
 ---
 
-## 五、它是怎么挂进 DSH 的
+## 5. How it hooks into DSH
 
-### 系统调用对应关系
+### Hook correspondence
 
-| 钩子 | 触发时机 | 我能拿到 | 我能返回 |
+| Hook | Fires | Available to me | I can return |
 |---|---|---|---|
-| `tools/pre-execute` | 工具执行**前**（waterfall） | `exec.name` `exec.arguments` `exec.agent` `next` | `allow`/`deny`/`ask`/`cancel`，或直接 `return next()` 透传 |
-| `tools/post-execute` | 工具执行**后** | 同上 + `result` | 下游结果对象，可追加 `additionalContexts` |
-| `agent/pre-step` | 每步调用模型**前** | `agent` `messages` `signal` | `next()` |
+| `tools/pre-execute` | **Before** tool execution (waterfall) | `exec.name` `exec.arguments` `exec.agent` `next` | `allow`/`deny`/`ask`/`cancel`, or just `return next()` to pass through |
+| `tools/post-execute` | **After** tool execution | Same as above + `result` | A downstream result object, optionally with appended `additionalContexts` |
+| `agent/pre-step` | Before every model call | `agent` `messages` `signal` | `next()` |
 
-**关键实现细节：**
+**Critical implementation details:**
 
-1. **`messages` 是本步新增的，不是全部历史。** DSH 用 `claim()` 取增量，所以「出现 user 消息就重置」不会把每步都重置。
-2. **注入用的 `source.kind` 必须是 `'user-approval'`。** 用自定义 kind 可能被下游拒绝；用 `'user'` 会被自己的 `pre-step` 误判成新任务、每步自清。
-3. **`return next()` 拿到的就是下游决策，直接透传。** waterfall 不调 `next()` 等于短路整条流水线。
+1. **`messages` is this step's increment, not the whole history.** DSH uses `claim()` to take the delta, so "reset whenever a user message appears" does not reset on every step.
+2. **Injected notices must use `source.kind: 'user-approval'`.** A custom kind may be rejected downstream; using `'user'` would make the plugin's own `pre-step` treat it as a new task and reset itself every step.
+3. **`return next()` yields the downstream decision — pass it through.** Not calling `next()` in a waterfall short-circuits the entire pipeline.
 
-### 包结构（三个字段缺一不可）
+### Package structure (all three fields are required)
 
 ```json
 {
@@ -220,64 +221,64 @@
 }
 ```
 
-- `exports` 里不列 `./cordis.patch.yml` → patch 解析不到，bundle 加载器直接跳过
-- `dsh.bundle.patch` 少了 `./` 前缀 → 同样的结果
+- Omitting `./cordis.patch.yml` from `exports` → the patch cannot be resolved and the bundle loader skips it entirely
+- Omitting the `./` prefix in `dsh.bundle.patch` → same result
 
-### 不能导出 `Config`
+### Do not export `Config`
 
-cordis 的配置解析是：
+cordis resolves configuration as:
 
 ```js
-if (!runtime.Config) return config;                              // 没有 → 原样用
-const result = runtime.Config['~standard'].validate(config);     // 有 → 必须是 standard-schema
+if (!runtime.Config) return config;                              // absent → use as-is
+const result = runtime.Config['~standard'].validate(config);     // present → must be standard-schema
 ```
 
-导出普通对象会让它崩在 `.validate`，而且**错误只写 stderr，插件静默失败**。
+Exporting a plain object crashes on `.validate`, and **the error only goes to stderr — the plugin fails silently**.
 
-**本插件刻意不导出 `Config`**，全部校验在 `apply()` 内完成（同样 fail-loud）。
+**This plugin deliberately does not export `Config`**; all validation happens inside `apply()` (still fail-loud).
 
 ---
 
-## 六、安装
+## 6. Installation
 
 ```powershell
-# <插件目录> 换成你 clone 下来的路径
-dsh plugin --profile <desktop|web> add file:<插件目录>
+# replace <plugin-dir> with the path you cloned
+dsh plugin --profile <desktop|web> add file:<plugin-dir>
 ```
 
-**`file:` 是复制，不是链接。改代码后必须 `remove` + `add` 才会更新。**
+**`file:` copies, it does not link. After changing code you must `remove` + `add` for it to take effect.**
 
-### 换台机器要改什么
+### Moving to another machine
 
-**插件本身零配置，即装即用。** 代码里没有任何绝对路径，探针日志走系统临时目录，确认语和阈值全走默认值。
+**The plugin itself needs zero configuration.** There are no absolute paths in the code, probe logs go to the system temp directory, and the trigger word and thresholds all use defaults.
 
-需要你在**新机器**上做的只有两件事，都在 DSH 侧，不在插件里：
+Only two things must be done on the **new machine**, both on the DSH side, not in the plugin:
 
-| 要改的 | 在哪 | 改成什么 |
+| What | Where | Set to |
 |---|---|---|
-| `--profile` 名 | 安装命令 | 用新机器 GUI 实际读的那个（先查进程命令行，见下） |
-| `approval` | 新机器 profile 的 `cordis.patch.yml` | `ask`（否则超限时 `ask` 会被拒成 `deny`） |
+| `--profile` name | The install command | The one the new machine's GUI actually reads (check the process command line, below) |
+| `approval` | The new machine's profile `cordis.patch.yml` | `ask` (otherwise `ask` is rejected as `deny` when the limit is hit) |
 
-想改阈值/文案，同样是改 profile 的 `cordis.patch.yml`，不用动插件源码。
+To change thresholds or wording, edit the profile's `cordis.patch.yml` — never the plugin source.
 
-### ⚠️ 最容易踩的坑：装错 profile
+### ⚠️ The easiest trap: installing into the wrong profile
 
-| 启动方式 | 读哪个 profile |
+| How it starts | Profile it reads |
 |---|---|
-| 桌面图标 / GUI | **`profiles\desktop`** |
+| Desktop icon / GUI | **`profiles\desktop`** |
 | `dsh.cmd web` | `profiles\web` |
 
-**装之前先查进程实际读的是哪个**：
+**Check which one the process actually reads before installing:**
 
 ```powershell
 Get-CimInstance Win32_Process -Filter "Name='DeepSeek Harness.exe'" | Select CommandLine
 ```
 
-看命令行里 `dsh-desktop-host` 后面跟的 profile 路径。
+Look at the profile path following `dsh-desktop-host` in the command line.
 
-**装错 profile 的症状很有迷惑性**：`--dump-config` 能看到你的条目，配得整整齐齐，但插件**永远不加载**。
+**The symptom of installing into the wrong profile is deceptive**: `--dump-config` shows your entry, neatly configured, while the plugin **never loads**.
 
-### 还要打开审批通道
+### Also open the approval channel
 
 ```yaml
 - id: permission
@@ -286,23 +287,23 @@ Get-CimInstance Win32_Process -Filter "Name='DeepSeek Harness.exe'" | Select Com
     presets:
       danger-full-access:
         sandbox: danger-full-access
-        approval: ask        # 必须是 ask；never 会把 ask 直接拒成 deny
+        approval: ask        # must be ask; never rejects ask directly as deny
 ```
 
 ---
 
-## 七、怎么确认装好了
+## 7. Verifying the installation
 
-**`--dump-config` 显示条目 ≠ 插件被加载。** 唯一的验证方式是模块探针。
+**`--dump-config` showing the entry is NOT proof the plugin loaded.** The only verification is a module probe.
 
-插件内留了开关：
+The plugin ships with a switch:
 
 ```js
 // lib/index.js
-const DEBUG_PROBE = false;   // 改成 true
+const DEBUG_PROBE = false;   // set to true
 ```
 
-改成 `true`、重装、重启后，**系统临时目录**下的 `confirm-gate-boot.log` 会记录（Windows 是 `%TEMP%`，Linux/macOS 是 `$TMPDIR` 或 `/tmp`）：
+Set it to `true`, reinstall, restart — and `confirm-gate-boot.log` in the **system temp directory** records (Windows `%TEMP%`, Linux/macOS `$TMPDIR` or `/tmp`):
 
 ```
 module imported
@@ -315,26 +316,26 @@ registered agent/pre-step -> disposer=function
 [enter] pre-execute tool=pwsh
 ```
 
-**看到 `[enter] pre-execute` 才算真正通了。**
+**Seeing `[enter] pre-execute` is the only proof it is genuinely working.**
 
 ---
 
-## 八、实测记录
+## 8. Field results
 
-### 8.1 计数分档（真机，`freeLimit=10` / `hardLimit=15` / `confirmWord=confirm`）
+### 8.1 Tier behaviour (real machine, `freeLimit=10` / `hardLimit=15` / `confirmWord=confirm`)
 
-| 次数 | 实际注入文本 |
+| Count | Injected text |
 |---|---|
-| 1 | `警告，无confirm持久化操作。请向用户索要confirm。（本轮第 1/10 次持久化：pwsh）` |
-| 5 | `警告，无confirm持久化操作。…（本轮第 5/10 次持久化：pwsh）` |
-| 10 | `警告，无confirm持久化操作。…（本轮第 10/10 次持久化：pwsh）` |
-| **11** | `指令：立即停止所有无 confirm 的持久化操作。…（识别语：confirm；本轮第 11/15 次持久化：pwsh）` |
+| 1 | `Warning: persistent operation without confirm. Ask the user for confirm. (turn operation 1/10: pwsh)` |
+| 5 | `Warning: … (turn operation 5/10: pwsh)` |
+| 10 | `Warning: … (turn operation 10/10: pwsh)` |
+| **11** | `Instruction: stop all persistent operations without confirm immediately. … (trigger word: confirm; turn operation 11/15: pwsh)` |
 
-**关键观察**：第 11 次收到指令后，模型主动停手并索要 confirm——**框架设计目标达成**。
+**Key observation**: on receiving the instruction at the 11th operation, the model stopped on its own and asked for confirmation — **the design goal was achieved**.
 
-### 8.2 命令级判定（`exec` 结构实测）
+### 8.2 Command-level judgement (`exec` shape, measured)
 
-通过模块探针抓到的真实结构（DSH `0.2.0-rc.2`）：
+The real structure captured by a module probe (DSH `0.2.0-rc.2`):
 
 ```json
 {
@@ -345,60 +346,60 @@ registered agent/pre-step -> disposer=function
 }
 ```
 
-**关键点**：参数在 `exec.arguments`（不是 `params`），且经 `snapshotJsonValue` 深拷贝 + `deepFreeze` 冻结——插件读它是安全的，改不动它。
+**Key points**: arguments live in `exec.arguments` (not `params`), and they are deep-copied via `snapshotJsonValue` and then `deepFreeze`d — the plugin can read them safely and cannot mutate them.
 
-命令判定单测（16 项）：
+Command-judgement unit tests (16):
 
-| 命令 | 判定 |
+| Command | Judgement |
 |---|---|
-| `Get-ChildItem E:\SRoada -Force` | 只读 ✅ |
-| `Get-ChildItem \| Select-Object Name` | 只读 ✅ |
-| `$x = Get-Date; Write-Output $x` | 只读 ✅ |
-| `Get-Item x; Remove-Item y` | 持久化 ✅ |
-| `Get-ChildItem > out.txt` | 持久化 ✅ |
-| `git status` | 持久化 ✅ |
-| `& "C:\a.exe"` | 持久化 ✅ |
+| `Get-ChildItem E:\SRoada -Force` | read-only ✅ |
+| `Get-ChildItem \| Select-Object Name` | read-only ✅ |
+| `$x = Get-Date; Write-Output $x` | read-only ✅ |
+| `Get-Item x; Remove-Item y` | persistent ✅ |
+| `Get-ChildItem > out.txt` | persistent ✅ |
+| `git status` | persistent ✅ |
+| `& "C:\a.exe"` | persistent ✅ |
 
-**16/16 通过。**
+**16/16 passing.**
 
-### 8.3 含 confirm 放行整轮
+### 8.3 Containing the word releases the whole turn
 
-离线集成测试（18 项全过）覆盖：放行后连续 30 次持久化操作不拦、不提醒；句中任意位置含识别语都生效；大写 `DADA` 生效；不含识别语的消息撤销放行并恢复计数。
-
----
-
-## 九、已知边界
-
-**没验证过的：**
-
-- `12 ~ 15` 次区间的实际表现
-- `>= 15` 时 `ask` 能弹出审批框（需要 `approval: ask` 且应答者在线）
-
-**设计上的限制：**
-
-1. **一次工具调用算 1 次**，不管里面执行多少条命令。
-2. **`ask` 的弹框位置取决于应答者。** 当前是 Web GUI，**手机收不到**，除非手机能访问 DSH 地址。
-3. **`subagent` 算在主 agent 头上**，子代理内部的操作不单独计。
-4. **不是安全边界。** 模型如果刻意绕过（比如在 `pwsh` 里用原生命令批量改文件），计数器只会记 1 次。**它防的是无意识的烧 token，不是恶意突破。**
-5. **命令判定是名字比对，不是语法解析。** 拿不准的一律判持久化——**只多计，不漏拦**。
-6. **含识别语即整轮放行是粗粒度的。** 如果用户在讨论时说「我觉得 confirm 这个逻辑有问题」，也会触发放行。这是刻意选的简单规则：把歧义交给用户措辞，而不是让插件猜意图。
+Offline integration tests (18/18 passing) cover: 30 consecutive persistent operations after release without blocking or reminding; the trigger word anywhere in the sentence; uppercase `DADA`; and revocation plus resumption of counting on a message without the word.
 
 ---
 
-## 十、附录：为什么需要完全权限
+## 9. Known limits
 
-在 Windows 上，DSH 的沙箱会让 `pwsh` 调用全部返回 `0xC0000142`（`STATUS_DLL_INIT_FAILED`）。三层原因：
+**Not yet verified:**
 
-1. **策略层** `dsh-sandbox-policy` —— 会话模式决定后续是否启用
-2. **令牌层** `dsh-sandbox-windows-acl` —— 复制令牌、剥权限、压 Low 完整性、加能力 SID 和保活组；**缺保活组就在 DLL 初始化期死**
-3. **启动层** `dsh-pwsh-sandbox` —— 受限令牌下**必须继承宿主控制台**，自己开控制台即死
+- Actual behaviour in the `12 ~ 15` range
+- Whether `ask` actually surfaces an approval prompt at `>= 15` (requires `approval: ask` and a responder online)
 
-`danger-full-access` 会绕过全部三层（官方文档：「绝不咨询提供方」）。
+**Design limitations:**
 
-**所以本插件的定位是：当你不得不给完全权限时，起码让它有账可算。**
+1. **One tool call counts as 1**, regardless of how many commands it runs.
+2. **Where the `ask` prompt appears depends on the responder.** Currently the Web GUI — **not reachable from a phone** unless the phone can access the DSH address.
+3. **`subagent` counts against the main agent**; operations inside a subagent are not counted separately.
+4. **Not a security boundary.** A model that deliberately works around it (say, batch-renaming files with a native command inside `pwsh`) only registers 1 count. **It guards against unconscious token burn, not malicious escape.**
+5. **Command judgement is a name comparison, not a parser.** Anything uncertain is judged persistent — **over-counts only, never misses a block**.
+6. **Releasing on the trigger word is coarse-grained.** If the user says "I think there's a problem with this confirm logic" while discussing, that also releases the turn. This is a deliberately simple rule: ambiguity is resolved by the user's wording rather than by the plugin guessing intent.
 
 ---
 
-## 许可
+## 10. Appendix: why full permissions are needed
+
+On Windows, DSH's sandbox makes every `pwsh` call return `0xC0000142` (`STATUS_DLL_INIT_FAILED`). Three layers are responsible:
+
+1. **Policy layer** `dsh-sandbox-policy` — the session mode decides whether the rest is enabled
+2. **Token layer** `dsh-sandbox-windows-acl` — duplicates the token, strips privileges, drops to Low integrity, adds capability SIDs and keep-alive groups; **missing keep-alive groups means death during DLL initialization**
+3. **Launch layer** `dsh-pwsh-sandbox` — under a restricted token it **must inherit the host console**; creating its own console is fatal
+
+`danger-full-access` bypasses all three layers ("never consults the provider" per the official docs).
+
+**So this plugin's position is: when you have no choice but to grant full permissions, at least give it an accounting.**
+
+---
+
+## License
 
 MIT

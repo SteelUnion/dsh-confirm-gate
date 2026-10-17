@@ -24,6 +24,7 @@
     "lib/index.js",
     "cordis.patch.yml",
     "README.md",
+    "README.zh-CN.md",
     "LICENSE"
   ],
   "scripts": {
@@ -37,6 +38,10 @@
   },
   "license": "MIT",
   "author": "SRoada",
+  "homepage": "https://github.com/SteelUnion/dsh-confirm-gate#readme",
+  "bugs": {
+    "url": "https://github.com/SteelUnion/dsh-confirm-gate/issues"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/SteelUnion/dsh-confirm-gate.git"
