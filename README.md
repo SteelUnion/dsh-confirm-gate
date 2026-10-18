@@ -4,14 +4,18 @@
 
 English | [中文](README.zh-CN.md)
 
+> **What** — Per-turn counter for persistent operations. Gives the model a brake, not a wall.
+> **Verified** — Live hot-switch on Windows (full → workspace-write → read-only → full), no restart. The model stopped itself at 11/15.
+> **Cost** — ~$0.27 model spend. Zero external deps, ready-to-install archive in [`dist/`](dist/).
+>
+> **It steps aside under sandbox / read-only modes** — complementary to DSH's own sandbox, not a replacement.
+
 A runtime plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). It keeps a **per-turn counter of persistent operations**, injects a stop instruction once the free budget is spent, and asks the user for confirmation at a hard limit.
 
 > **This is not a security boundary. It is a cost boundary and a course-correction mechanism.**
 > It assumes the agent is running **without a sandbox holding the boundary**, and its purpose is to give the model **the ability to brake on its own** before it burns tokens or rewrites files. Real sandbox isolation is provided by DSH's own sandbox — complementary to this plugin, not a replacement.
 
-*c. 0.27 USD of model spend (author's estimate, see [`dist/COSTS.md`](dist/COSTS.md)) — the rest of that day went to environment diagnosis and research, not to this plugin.*
-
-A ready-to-install archive lives in [`dist/`](dist/).
+*Cost figure is an author's estimate — see [`dist/COSTS.md`](dist/COSTS.md). The rest of that day went to environment diagnosis and research, not to this plugin.*
 
 ### Scope: it stays silent under a sandbox
 
@@ -77,6 +81,24 @@ Hooks are always registered; the decision is per call. That is what makes hot-sw
 | You want `read` / `grep` / web lookups **never interrupted** | ✅ Non-persistent operations are never counted |
 | You want to use it as a sandbox against a malicious model | ❌ Use DSH's built-in sandbox |
 | You use a different agent framework | ❌ This is a DSH plugin |
+
+### Trade-offs & known limitations
+
+Listed first, because they are the interesting part.
+
+1. **The first N operations have no gate at all.** In the default `freeLimit: 10` configuration, operations 1–10 are allowed with only a reminder. That window is deliberate — it gives the model room to correct itself before being asked to stop. Set `freeLimit: 0` when you want zero tolerance; the plugin then ask-confirms before the very first persistent operation.
+2. **`confirm` defends against accidents, not injection.** The threat model is a *trusted user with a fallible model*, where the failure to prevent is unbounded trial-and-error. Prompt injection is a different layer — that is what DSH's approval channel and sandbox are for. Do not deploy this as the only thing between an untrusted input and your filesystem.
+3. **The release rule is deliberately coarse.** Any message containing the trigger word releases the entire turn, including a message that merely discusses the word. This is on purpose: ambiguity is resolved by what the user typed, not by the plugin guessing intent.
+4. **Command judgement is a name comparison, not a parser.** `Get-ChildItem $p.GetFiles()` is counted as persistent, because the plugin does not evaluate the pipeline. The error direction is chosen: over-count, never under-count.
+5. **A tool call is one count**, regardless of how many files it touches.
+
+### Why not X
+
+| Alternative | Why not |
+|---|---|
+| **Hard-block instead of counting** | Tried first in an OpenClaw build. A wall turns every write into an interruption the user did not ask for. With a counter and an explicit stop instruction, the model does the arithmetic itself — it stopped at 11/15 on its own. The brake works better than the wall. |
+| **Plugin-only, no DSH host hooks** | The per-turn count has to come from the **tool-dispatch layer**. A wrapper around the model API cannot see individual tool calls, so it cannot count them. The count lives where the calls live. |
+| **Fold it into the sandbox** | Different question, different layer. A sandbox answers "is this allowed?". This answers "how much has happened?". Sitting inside the sandbox would tie a budget to a permission model that changes underneath it. |
 
 ---
 
@@ -456,6 +478,14 @@ On Windows, DSH's sandbox makes every `pwsh` call return `0xC0000142` (`STATUS_D
 `danger-full-access` bypasses all three layers ("never consults the provider" per the official docs).
 
 **So this plugin's position is: when you have no choice but to grant full permissions, at least give it an accounting.**
+
+---
+
+## Contributing
+
+PRs and issues are welcome. Suggestions are especially useful on the two open items listed under [Known limits](#9-known-limits) — behaviour in the `12 ~ 15` range, and whether `ask` surfaces correctly once a responder is online.
+
+This is also a candidate for a formal upstream PR to DeepSeek Harness as a low-cost capability proof. If the maintainers would rather host it in-tree, that discussion is welcome.
 
 ---
 
