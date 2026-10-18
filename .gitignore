@@ -20,3 +20,6 @@ coverage/
 # Commit message drafts (written by the release helper, never part of the repo)
 commitmsg.txt
 *.commitmsg
+
+# Personal notes — kept locally, never published
+docs/interview-notes-zh.md

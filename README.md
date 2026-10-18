@@ -2,7 +2,7 @@
 
 **A bounded-run framework that keeps an AI agent accountable on hosts where you had to grant full permissions.**
 
-English | [中文](README.zh-CN.md)
+English | [中文](README.zh-CN.md) · **v0.1.2**
 
 > **What** — Per-turn counter for persistent operations. Gives the model a brake, not a wall.
 > **Verified** — Live hot-switch on Windows (full → workspace-write → read-only → full), no restart. The model stopped itself at 11/15.
@@ -11,6 +11,8 @@ English | [中文](README.zh-CN.md)
 > **It steps aside under sandbox / read-only modes** — complementary to DSH's own sandbox, not a replacement.
 
 A runtime plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). It keeps a **per-turn counter of persistent operations**, injects a stop instruction once the free budget is spent, and asks the user for confirmation at a hard limit.
+
+> **Compatibility** — built and verified against DSH `0.2.0-rc.2`; the peer range is `>=0.2.0-rc.2`, so it also loads on `0.2.1-rc.2` and later RC builds. If a future DSH release changes the tool-dispatch hooks this plugin binds to, it will fail loudly rather than silently — see [§7](#7-verifying-the-installation).
 
 > **This is not a security boundary. It is a cost boundary and a course-correction mechanism.**
 > It assumes the agent is running **without a sandbox holding the boundary**, and its purpose is to give the model **the ability to brake on its own** before it burns tokens or rewrites files. Real sandbox isolation is provided by DSH's own sandbox — complementary to this plugin, not a replacement.

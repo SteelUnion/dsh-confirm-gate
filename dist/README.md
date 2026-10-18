@@ -17,8 +17,8 @@
 |---|---|
 | 仓库 | https://github.com/SteelUnion/dsh-confirm-gate |
 | 许可 | MIT |
-| 当前版本 | v0.1.1 |
-| 开发周期 | 1 天（2026-10-17） |
+| 当前版本 | v0.1.2 |
+| 开发周期 | 1 天（2026-10-17），后续两次文档与兼容性修订 |
 | 规模 | 716 行代码 / 27 项测试 |
 | 花费 | 约 0.27 USD（估算，见 `COSTS.md`） |
 
@@ -48,10 +48,12 @@
 
 | 文件 | 版本 | 大小 | 日期 |
 |---|---|---|---|
+| `dsh-confirm-gate-v0.1.2.zip` | 0.1.2 | 37.6 KB | 2026-10-18 |
 | `dsh-confirm-gate-v0.1.1.zip` | 0.1.1 | 35.2 KB | 2026-10-17 |
 | `dsh-confirm-gate-v0.1.0.zip` | 0.1.0 | 34.3 KB | 2026-10-17 |
 
-v0.1.0 只留在这里做对照；它在 GitHub Release 上有永久副本，随时可下载。
+v0.1.2 放宽了 peer 依赖范围到 `>=0.2.0-rc.2`，以便装在 `0.2.1-rc.2` 及之后的 DSH 上。
+v0.1.1 及更早把版本写死成 `0.2.0-rc.2`。
 
 ### 包内容
 
@@ -60,8 +62,8 @@ lib/index.js          25.2 KB   插件主体（唯一运行必需文件）
 test/integration.mjs  11.0 KB   离线集成测试，27 项
 package.json           1.3 KB   含 dsh.bundle.patch 与 peerDependencies
 cordis.patch.yml         443 B   默认挂载配置
-README.md             22.0 KB   英文
-README.zh-CN.md       20.0 KB   中文
+README.md             25.3 KB   英文
+README.zh-CN.md       22.9 KB   中文
 LICENSE                1.0 KB   MIT
 ```
 
