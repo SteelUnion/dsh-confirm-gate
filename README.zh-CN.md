@@ -2,7 +2,7 @@
 
 **在完全权限的主机上，让 AI Agent 可控运行的次数闸框架。**
 
-[English](README.md) | 中文 · **v0.1.2**
+[English](README.md) | 中文 · **v0.1.3**
 
 > **是什么** — 按轮统计持久化操作。给模型一个刹车，不是一堵墙。
 > **已验证** — Windows 真机热切换（full → workspace-write → read-only → full），全程不重启；模型在第 11/15 次**自己停下来了**。
