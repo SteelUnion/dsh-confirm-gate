@@ -5,7 +5,7 @@
 # 因此想调 freeLimit / hardLimit / confirmWord，改那边，不用改这里。
 - insert:
     - id: confirm-gate
-      name: '@sroada/dsh-confirm-gate'
+      name: 'dsh-confirm-gate'
       config:
         freeLimit: 10
         hardLimit: 15

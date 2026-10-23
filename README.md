@@ -217,7 +217,7 @@ It is now **released for the whole turn when the word appears**. `resetOnConfirm
 # ~/.dsh/profiles/<your-profile>/cordis.patch.yml
 - insert:
     - id: confirm-gate
-      name: "@sroada/dsh-confirm-gate"
+      name: "dsh-confirm-gate"
       config:
         freeLimit: 0          # give nothing away
         hardLimit: 3

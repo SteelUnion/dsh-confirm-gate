@@ -1,5 +1,5 @@
 {
-  "name": "@sroada/dsh-confirm-gate",
+  "name": "dsh-confirm-gate",
   "version": "0.1.3",
   "description": "Bounded-run framework for DeepSeek Harness: per-turn persistent-operation counter that reminds, then instructs the model to stop, then asks the user for confirmation.",
   "keywords": [

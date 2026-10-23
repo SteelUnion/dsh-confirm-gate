@@ -208,7 +208,7 @@
 # ~/.dsh/profiles/<你的profile>/cordis.patch.yml
 - insert:
     - id: confirm-gate
-      name: "@sroada/dsh-confirm-gate"
+      name: "dsh-confirm-gate"
       config:
         freeLimit: 0          # 一次都不白给
         hardLimit: 3
