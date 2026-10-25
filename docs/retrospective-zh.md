@@ -162,8 +162,8 @@ const result = runtime.Config['~standard'].validate(config);   // 有 → 必须
 **原因**：`file:` 安装是**复制**不是链接，存在两份：
 
 ```
-E:\SRoada\confirm-gate\lib\index.js                        ← 测试读这个
-C:\...\profiles\desktop\node_modules\@sroada\...\index.js  ← 运行时跑这个
+E:\work\confirm-gate\lib\index.js                        ← 测试读这个
+C:\...\profiles\desktop\node_modules\dsh-confirm-gate\index.js  ← 运行时跑这个
 ```
 
 我改了其中一份，测试测的是另一份。**测试通过 ≠ 测的是新代码。**
@@ -367,10 +367,10 @@ DSH 侧 0.78，再按工作量归约 35% 到插件本体。**我在 README 里�
 
 | 内容 | 路径 |
 |---|---|
-| 源码仓库 | `E:\SRoada\confirm-gate\` |
+| 源码仓库 | `E:\work\confirm-gate\` |
 | GitHub | `https://github.com/SteelUnion/dsh-confirm-gate` |
 | 成品包 | `dist\dsh-confirm-gate-v0.1.0.zip` |
 | Release 附件 | `releases/download/v0.1.0/dsh-confirm-gate-v0.1.0.zip` |
 | 花费记录 | `dist\COSTS.md` |
 | 展示帖草稿 | `docs\show-your-plugins-post.md` |
-| 运行时安装位置 | `~\.dsh\profiles\{desktop,web}\node_modules\@sroada\dsh-confirm-gate\` |
+| 运行时安装位置 | `~\.dsh\profiles\{desktop,web}\node_modules\dsh-confirm-gate\` |

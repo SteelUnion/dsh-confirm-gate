@@ -2,7 +2,7 @@
 
 **A bounded-run framework that keeps an AI agent accountable on hosts where you had to grant full permissions.**
 
-English | [中文](README.zh-CN.md) · **v0.1.3**
+English | [中文](README.zh-CN.md) · **v0.1.4**
 
 > **What** — Per-turn counter for persistent operations. Gives the model a brake, not a wall.
 > **Verified** — Live hot-switch on Windows (full → workspace-write → read-only → full), no restart. The model stopped itself at 11/15.
@@ -435,7 +435,7 @@ Command-judgement unit tests (16):
 
 | Command | Judgement |
 |---|---|
-| `Get-ChildItem E:\SRoada -Force` | read-only ✅ |
+| `Get-ChildItem E:\work -Force` | read-only ✅ |
 | `Get-ChildItem \| Select-Object Name` | read-only ✅ |
 | `$x = Get-Date; Write-Output $x` | read-only ✅ |
 | `Get-Item x; Remove-Item y` | persistent ✅ |
