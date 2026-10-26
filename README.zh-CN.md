@@ -1,5 +1,10 @@
 # dsh-confirm-gate
 
+![License](https://img.shields.io/badge/license-MIT-blue)
+![Zero deps](https://img.shields.io/badge/dependencies-zero-brightgreen)
+![DSH](https://img.shields.io/badge/dsh-%E2%89%A50.2.0--rc.2-orange)
+![Version](https://img.shields.io/badge/version-0.2.0-lightgrey)
+
 > **你的 AI 助手一口气改 20 个文件、烧掉一整天额度之前，会先停下来问你一句。**
 >
 > 装上它，模型每动一次手就记一笔。额度快用完时它开始提醒自己刹车，
@@ -12,6 +17,26 @@
 [English](README.md) | 中文 · **v0.2.0**
 
 ---
+
+## 它跑起来是这样的
+
+```
+模型发起第 11 次文件修改
+        ↓
+  confirm-gate 记一笔，超了免确认额度
+        ↓
+  往上下文注入：「立刻停止，向用户索要 confirm」
+        ↓
+  第 15 次（硬上限）→ 工具失败，等用户回 confirm
+        ↓
+  用户回一句 confirm → 整轮放行，计数器清零
+```
+
+**它不是拦截器，是一个会说话的计数器**：前 10 次不管，
+11–14 次提醒模型自己刹车，15 次才真拦。这样模型有机会在你去喝咖啡的时候自己停下来。
+
+---
+
 
 ## 三十秒上手
 

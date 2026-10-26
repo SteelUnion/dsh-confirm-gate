@@ -1,5 +1,10 @@
 # dsh-confirm-gate
 
+![License](https://img.shields.io/badge/license-MIT-blue)
+![Zero deps](https://img.shields.io/badge/dependencies-zero-brightgreen)
+![DSH](https://img.shields.io/badge/dsh-%E2%89%A50.2.0--rc.2-orange)
+![Version](https://img.shields.io/badge/version-0.2.0-lightgrey)
+
 > **Stops your AI agent before it rewrites 20 files and burns a day of budget.**
 >
 > Install it and every action the model takes is counted. As the budget runs down it
@@ -7,6 +12,26 @@
 > to type `confirm`. **No kernel changes, no required config.**
 
 English | [中文](README.zh-CN.md) · **v0.2.0**
+
+---
+
+## What it looks like while running
+
+```
+The model starts its 11th file change
+        ↓
+  confirm-gate counts it, past the free budget
+        ↓
+  Injects into context: "stop now, ask the user for confirm"
+        ↓
+  The 15th (hard limit) → the tool fails, waits for you
+        ↓
+  You type confirm → the whole turn is released, counter resets
+```
+
+**It is not an interceptor; it is a counter that talks.** The first 10 calls go
+unnoticed, 11–14 tell the model to brake on its own, and only the 15th actually stops it.
+That gap is what lets the model come to a halt while you are away from the keyboard.
 
 ---
 
