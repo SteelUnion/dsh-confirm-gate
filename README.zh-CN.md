@@ -2,13 +2,14 @@
 
 **在完全权限的主机上，让 AI Agent 可控运行的次数闸框架。**
 
-[English](README.md) | 中文 · **v0.1.4**
+[English](README.md) | 中文 · **v0.2.0**
 
 > **是什么** — 按轮统计持久化操作。给模型一个刹车，不是一堵墙。
 > **已验证** — Windows 真机热切换（full → workspace-write → read-only → full），全程不重启；模型在第 11/15 次**自己停下来了**。
 > **成本** — 约 0.27 USD 模型花费。零外部依赖，[`dist/`](dist/) 里有可直接安装的包。
 >
 > **沙盒 / 只读模式下它自动让位** —— 与 DSH 自带沙盒互补，不是替代。
+> **微信通道里拦掉中途选项** —— 回合制通道承载不了半路弹卡，见[第九节](#九微信通道拦截中途交互选项)。
 
 一个给 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 用的运行时插件。提供**每轮对话独立的持久化操作计数器**，在免确认额度用尽后向模型注入停止指令，达到硬上限时索要用户 confirm。
 
@@ -442,7 +443,208 @@ registered agent/pre-step -> disposer=function
 
 ---
 
-## 九、已知边界
+## 九、微信通道：拦截中途交互选项
+
+**微信通道是回合制的。** 它把一整轮跑完、拿到最终回复，才发一条消息给用户。中途弹出的选项没有地方落。
+
+| | 桌面 Web GUI | 微信通道 |
+|---|---|---|
+| 中途弹选项 | ✅ 有应答方，用户直接点 | ❌ 这一轮还在跑，用户收不到 |
+| 后果 | 正常 | **整轮挂住，双方一起等** |
+
+所以本插件在**微信会话**里拦掉会发起中途交互的工具（当前是 `ask-user-question`），并让模型改用**纯文本**把问题写进正常回复里，等用户下一条消息作答。
+
+### 它怎么知道这是微信会话
+
+**不靠配置，不靠猜。** 微信通道插件（`dsh-wechat-queue`）通过 cordis 服务把自己的归属判断暴露出来：
+
+```js
+ctx.provide('wechatQueue', {
+  owns(sessionId) { return ownsSessions.has(id); },
+});
+```
+
+本插件用 `ctx.get('wechatQueue')` 软探测这个服务，再拿 `exec.agent.session.id` 去问。
+
+**`owns` 读的是内存集合，登记时机在「会话建好之后、这一轮开跑之前」。** 所以在 `tools/pre-execute` 里问到的一定是准的，不存在「刚重启还没登记」的空窗。
+
+### 拦截返回值是 `deny`，不是 `block`
+
+这一点很关键，也踩过：
+
+`tools/pre-execute` 是 waterfall，DSH 只认四种返回值：
+
+| 返回值 | 效果 |
+|---|---|
+| `allow` | 执行 |
+| `ask` | 走审批通道 |
+| **`deny` + `reason`** | **不执行，`reason` 以 `Error: <reason>` 交回模型** |
+| `cancel` | 不执行，但**带不了原因** |
+
+`block` 是 `tools/post-execute` 的合法值，**在 `pre-execute` 里是非法值**——既不是 `ask` 也取不到 `reason`，会被当成「没有拒绝理由」直接派发，**工具照常执行**。
+
+选 `deny` 而不是 `cancel`，是因为只有 `deny` 能把原因送进模型上下文。`cancel` 是哑的：模型只看到一个中止结果，很可能原地重试，于是再被拦一次。
+
+### 三条保守原则
+
+拿不到准确答案时，一律当作「**不是**微信会话」：
+
+1. 拿不到 `wechatQueue` 服务 → 不拦
+2. 拿不到 `session.id` → 不拦
+3. `owns()` 抛异常 → 不拦
+
+**方向是「宁可漏拦，绝不误拦」。** 两种失效不对称：
+
+- **误拦** → 桌面会话失去选项功能，**本来正常的能力被弄坏**
+- **漏拦** → 回到没有这个功能的状态
+
+失向这边，是因为「多拦一次」的代价比「弄坏一个正常功能」高。
+
+### 你会看到什么
+
+在微信会话里让模型用选项时，工具直接返回：
+
+```
+Error: 指令：当前会话是微信通道，不能发起中途交互选项。……请立刻改用纯文本提问
+```
+
+**这不是报错，是拦截生效。** 模型随后会用文字把问题重写一遍发给你。
+
+### 局限
+
+- **需要那个通道插件提供 `wechatQueue` 服务。** 没有它就退化成不拦——本插件不会因此报错。
+- **只认服务名 `wechatQueue`。** 别的通道（Slack、Discord……）要接，得各自提供同名服务，或在本插件里加分支。
+- **微信里永远没有可点的选项。** 这是回合制通道的固有代价，不是本插件能绕开的。
+
+---
+
+## 十、用到的 DSH 核心逻辑
+
+这一节把本插件依赖的 DSH 内部契约逐条写下来。**它们是文档没写、靠读源码和真机实测确认的东西**，也是升级 DSH 后最可能变的地方。
+
+### 10.1 `tools/pre-execute` 的返回值契约
+
+**权威实现位置**：`@deepseek-ai/dsh-tools` 的 `prepareExecution()`。
+
+```js
+const gate = await this.ctx.waterfall(carrier, 'tools/pre-execute', exec,
+                                      () => Promise.resolve({ kind: 'allow' }));
+if (decision.kind === 'cancel') {
+  return await next({ kind: 'post-result', result: toolAbortedBeforeDispatchResult() });
+}
+const denialReason = decision.kind === 'allow' ? this.guardReason(exec) : decision.reason;
+if (denialReason !== undefined) {
+  return await next({ kind: 'post-result',
+    result: { content: [{ type: 'text', text: `Error: ${denialReason}` }], isError: true }});
+}
+// 落到这里 → dispatch
+```
+
+**逐值语义：**
+
+| 返回值 | 是否执行 | 模型看到什么 |
+|---|---|---|
+| `{ kind: 'allow' }` | ✅ | 正常工具结果 |
+| `{ kind: 'ask', reason }` | 视审批结果 | 审批被拒 → 拒绝原因 |
+| **`{ kind: 'deny', reason }`** | ❌ | **`Error: <reason>`，`isError: true`** |
+| `{ kind: 'cancel' }` | ❌ | 「调用前已中止」，**没有原因** |
+| 其它任何值（含 `block`） | ✅ **照常执行** | 正常工具结果 |
+
+**最后一行是最容易踩的。** `block` 在 `tools/post-execute` 里是合法值，在 `pre-execute` 里不是。DSH 不会对非法值报错，只会走到 `dispatch` 那一步——**你以为拦了，其实什么都没发生。**
+
+### 10.2 waterfall 与 `next()`
+
+`tools/pre-execute` 是 **waterfall** 事件：每个监听者拿到本轮的当前结论，可以改写，也可以 `return next()` 直接透传。
+
+- **不调 `next()` 就是短路整条流水线**，后面的监听者全都收不到。
+- **本插件的写法**：不关心的情况一律 `return next()`；要拒绝时返回 `deny` 对象，**不调 `next()`**——因为已经给出终局结论。
+
+### 10.3 单调 guard 与 `deny` 的关系
+
+DSH 在 waterfall 之外还有一层 `tools.guard()`，它是**单调**的：只能拒绝，不能放行。
+
+```js
+const denialReason = decision.kind === 'allow' ? this.guardReason(exec) : decision.reason;
+```
+
+**`deny` 会跳过 guard 检查**——本插件已给出拒绝理由，没必要再问一遍 guard。**`allow` 才继续走 guard。**
+
+### 10.4 `ctx.provide()` 是注册服务的唯一入口
+
+本插件要问别的插件「这个会话是不是你的」，得靠 cordis 服务。**注册服务的正确写法只有一种：**
+
+```js
+ctx.provide('wechatQueue', { owns(sessionId) { … } });
+```
+
+它的内部实现是 `ctx.reflect.provide(name, value, check)`：
+
+- 会自行把 `reflect.props[name]` 声明成 `{ type: 'service' }`
+- 注册在**当前 fiber** 上，fiber 卸载时**自动注销**，不需要手工清理
+
+**两种错误写法，都会让插件整个不启动：**
+
+| 写法 | 结果 |
+|---|---|
+| `export const provide = ['wechatQueue']` | ❌ **cordis 不读 ESM 导出**，这条声明零效果 |
+| `ctx.set('wechatQueue', {...})` | ❌ `ctx.set` 只能**改**已声明的属性，`reflect.props[name]` 不存在时直接抛 `cannot set property "..." without provide` |
+
+**报错说的是「这个属性还没被声明成服务」，不是「你没在 provide 数组里写」。** 看到这句就去换 `ctx.provide`，别在数组上找办法。
+
+### 10.5 服务是惰性注入的，必须软探测
+
+cordis 的依赖注入是惰性的：**碰一个没在 `inject` 里声明的服务属性，会抛注入门错误**，不是返回 `undefined`。
+
+所以本插件读 `wechatQueue` 时：
+
+```js
+const svc = typeof ctx?.get === 'function' ? ctx.get('wechatQueue') : undefined;
+```
+
+**用 `ctx.get(name)` 软探测，绝不直接写 `ctx.wechatQueue`。** 这条路径上抛一次异常，拦截就会彻底静默失效——而且日志里看不出来。
+
+### 10.6 `exec` 里有什么
+
+`tools/pre-execute` 拿到的 `exec` 结构（本插件实际用到的字段）：
+
+| 字段 | 用途 |
+|---|---|
+| `exec.name` | 工具名，判「是不是交互类工具」 |
+| `exec.arguments` | 参数，判断是否为持久化命令时用 |
+| `exec.agent` | 发起调用的 agent |
+| `exec.agent.session.id` | **会话 id**，问 `wechatQueue.owns()` 用的就是它 |
+
+**`exec.agent` 可能是 `undefined`**（某些调用没有 agent 上下文），本插件对此一律放行。
+
+### 10.7 `agent/pre-step` 的 `messages` 是增量
+
+`messages` 是**本步新增的消息**，不是完整历史。DSH 用 `claim()` 取增量。
+
+**这个语义决定了「出现新 user 消息就重置计数」能工作**：如果 `messages` 是完整历史，那每一步都会看到同一条旧消息，计数会被无限重置。
+
+### 10.8 注入消息的 `source.kind`
+
+本插件往上下文里注入提醒时，用的是：
+
+```js
+source: { kind: 'user-approval', form: 'notice', … }
+```
+
+- **必须用 `MessageSourceMap` 里已声明过的 kind**，自定义 kind 可能被下游拒绝
+- **不能用 `'user'`**——自己的 `pre-step` 会把它当成用户的新消息，每步都自清计数
+
+### 10.9 沙盒模式要读两个源
+
+| 优先级 | 源 | 说明 |
+|---|---|---|
+| 1 | `ctx.sessionProjections.stateOf(session, 'permissions').sandbox` | 会话**当前**值，热切换时跟着变 |
+| 2 | `ctx.shell.sandboxMode` | executor 的**默认**值，**不跟随热切换** |
+
+**只看第 2 个会错**：切进沙盒再切回来，读到的永远是启动时那个值。
+
+---
+
+## 十一、已知边界
 
 **没验证过的：**
 
@@ -460,7 +662,7 @@ registered agent/pre-step -> disposer=function
 
 ---
 
-## 十、附录：为什么需要完全权限
+## 十二、附录：为什么需要完全权限
 
 在 Windows 上，DSH 的沙箱会让 `pwsh` 调用全部返回 `0xC0000142`（`STATUS_DLL_INIT_FAILED`）。三层原因：
 

@@ -2,13 +2,14 @@
 
 **A bounded-run framework that keeps an AI agent accountable on hosts where you had to grant full permissions.**
 
-English | [中文](README.zh-CN.md) · **v0.1.4**
+English | [中文](README.zh-CN.md) · **v0.2.0**
 
 > **What** — Per-turn counter for persistent operations. Gives the model a brake, not a wall.
 > **Verified** — Live hot-switch on Windows (full → workspace-write → read-only → full), no restart. The model stopped itself at 11/15.
 > **Cost** — ~$0.27 model spend. Zero external deps, ready-to-install archive in [`dist/`](dist/).
 >
 > **It steps aside under sandbox / read-only modes** — complementary to DSH's own sandbox, not a replacement.
+> **It blocks mid-turn prompts on the WeChat channel** — a turn-based channel cannot carry a mid-turn card; see [section 9](#9-wechat-channel-blocking-mid-turn-interactive-prompts).
 
 A runtime plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). It keeps a **per-turn counter of persistent operations**, injects a stop instruction once the free budget is spent, and asks the user for confirmation at a hard limit.
 
@@ -451,7 +452,204 @@ Offline integration tests (18/18 passing) cover: 30 consecutive persistent opera
 
 ---
 
-## 9. Known limits
+## 9. WeChat channel: blocking mid-turn interactive prompts
+
+**The WeChat channel is turn-based.** It runs a whole turn, gets the final reply, and only then sends one message to the user. A prompt raised mid-turn has nowhere to land.
+
+| | Desktop Web GUI | WeChat channel |
+|---|---|---|
+| Mid-turn prompt | ✅ An answerer exists; the user clicks | ❌ The turn is still running; the user cannot receive it |
+| Outcome | Works | **The turn hangs; both sides wait** |
+
+So this plugin denies tools that raise mid-turn interaction (currently `ask-user-question`) **on WeChat sessions**, and tells the model to ask in **plain text** inside its normal reply instead, waiting for the user's next message.
+
+### How it knows the session is WeChat
+
+**No configuration, no guessing.** The WeChat channel plugin (`dsh-wechat-queue`) publishes its own ownership check as a cordis service:
+
+```js
+ctx.provide('wechatQueue', {
+  owns(sessionId) { return ownsSessions.has(id); },
+});
+```
+
+This plugin soft-probes that service with `ctx.get('wechatQueue')` and asks it about `exec.agent.session.id`.
+
+**`owns` reads an in-memory set, populated after the session is created and before the turn runs.** So the answer at `tools/pre-execute` is always current — there is no "just restarted, not registered yet" window.
+
+### The value is `deny`, not `block`
+
+This one matters, and it was learned the hard way.
+
+`tools/pre-execute` is a waterfall, and DSH honours exactly four return values:
+
+| Value | Effect |
+|---|---|
+| `allow` | Proceed |
+| `ask` | Route through the approval channel |
+| **`deny` + `reason`** | **Do not run; `reason` reaches the model as `Error: <reason>`** |
+| `cancel` | Do not run, but **cannot carry a reason** |
+
+`block` is a legal value for `tools/post-execute`, **but not for `pre-execute`** — it is neither `ask` nor a value carrying a `reason`, so it is read as "no denial reason" and the call is dispatched **as if nothing happened**.
+
+`deny` rather than `cancel`, because only `deny` can deliver the reason to the model. `cancel` is mute: the model sees an aborted call with no explanation, retries the same tool, and gets stopped again.
+
+### Three conservative rules
+
+When an accurate answer is unavailable, the session is treated as **not** WeChat:
+
+1. No `wechatQueue` service → do not block
+2. No `session.id` → do not block
+3. `owns()` throws → do not block
+
+**The bias is "rather miss than misfire".** The two failures are not symmetric:
+
+- **Misfire** → the desktop session loses prompting, **breaking a capability that already worked**
+- **Miss** → we are back to not having this feature at all
+
+### What you will see
+
+Asking the model for options in a WeChat session returns:
+
+```
+Error: 指令：当前会话是微信通道，不能发起中途交互选项。……请立刻改用纯文本提问
+```
+
+**That is not a crash — it is the guard working.** The model then rewrites the question as plain text.
+
+### Limitations
+
+- **Requires the channel plugin to provide the `wechatQueue` service.** Without it the guard degrades to not blocking, and this plugin will not error.
+- **Only the service name `wechatQueue` is recognised.** Other channels (Slack, Discord, …) need their own same-named service, or a branch added here.
+- **WeChat will never have clickable options.** That is an inherent cost of a turn-based channel, not something this plugin can work around.
+
+---
+
+## 10. The DSH core contracts this plugin relies on
+
+Every contract below was confirmed by reading the DSH source and by running it on a real machine. **None of it is documented upstream**, and all of it is what an upgrade is most likely to change.
+
+### 10.1 The `tools/pre-execute` return contract
+
+**Authoritative implementation**: `prepareExecution()` in `@deepseek-ai/dsh-tools`.
+
+```js
+const gate = await this.ctx.waterfall(carrier, 'tools/pre-execute', exec,
+                                      () => Promise.resolve({ kind: 'allow' }));
+if (decision.kind === 'cancel') {
+  return await next({ kind: 'post-result', result: toolAbortedBeforeDispatchResult() });
+}
+const denialReason = decision.kind === 'allow' ? this.guardReason(exec) : decision.reason;
+if (denialReason !== undefined) {
+  return await next({ kind: 'post-result',
+    result: { content: [{ type: 'text', text: `Error: ${denialReason}` }], isError: true }});
+}
+// falls through → dispatch
+```
+
+| Value | Runs? | What the model sees |
+|---|---|---|
+| `{ kind: 'allow' }` | ✅ | Normal tool result |
+| `{ kind: 'ask', reason }` | Depends on approval | Rejection reason if denied |
+| **`{ kind: 'deny', reason }`** | ❌ | **`Error: <reason>`, `isError: true`** |
+| `{ kind: 'cancel' }` | ❌ | "Aborted before dispatch", **no reason** |
+| Anything else (including `block`) | ✅ **runs anyway** | Normal tool result |
+
+**That last row is the trap.** `block` is legal for `tools/post-execute` and illegal here. DSH does not complain about the unknown value — it simply reaches `dispatch`. You think you blocked; nothing happened.
+
+### 10.2 Waterfall and `next()`
+
+`tools/pre-execute` is a **waterfall**: each listener receives the current decision, may rewrite it, or `return next()` to pass it through.
+
+- **Not calling `next()` short-circuits the whole pipeline** — no later listener runs.
+- This plugin calls `return next()` for anything it does not care about, and returns a `deny` object when it rejects (deliberately without calling `next()`, because it already holds the final decision).
+
+### 10.3 Monotonic guards vs. `deny`
+
+DSH has a second layer, `tools.guard()`, which is **monotonic**: it can only deny, never allow.
+
+```js
+const denialReason = decision.kind === 'allow' ? this.guardReason(exec) : decision.reason;
+```
+
+**A `deny` skips the guard check** — a rejection reason is already present, so asking the guards would be redundant. **`allow` continues into them.**
+
+### 10.4 `ctx.provide()` is the only way to register a service
+
+To ask another plugin "is this session yours?", this plugin needs a cordis service. **There is exactly one correct way to register one:**
+
+```js
+ctx.provide('wechatQueue', { owns(sessionId) { … } });
+```
+
+Internally that is `ctx.reflect.provide(name, value, check)`, which:
+
+- declares `reflect.props[name]` as `{ type: 'service' }` itself
+- registers on the **current fiber**, and unregisters automatically when that fiber unloads
+
+**Two plausible-looking alternatives both prevent the plugin from starting:**
+
+| Form | Result |
+|---|---|
+| `export const provide = ['wechatQueue']` | ❌ **cordis never reads ESM exports** — the declaration does nothing |
+| `ctx.set('wechatQueue', {...})` | ❌ `ctx.set` only **mutates** a declared property; with `reflect.props[name]` absent it throws `cannot set property "..." without provide` |
+
+**The error means "this property was never declared as a service", not "you forgot the provide array".** Move to `ctx.provide`; do not keep editing the array.
+
+### 10.5 Services are injected lazily — always soft-probe
+
+cordis injects lazily: **touching a service property not named in `inject` throws an injection-gate error** rather than returning `undefined`.
+
+So this plugin reads the service like this:
+
+```js
+const svc = typeof ctx?.get === 'function' ? ctx.get('wechatQueue') : undefined;
+```
+
+**Use `ctx.get(name)`; never write `ctx.wechatQueue` directly.** One throw on this path silently disables the guard — and leaves nothing in the log.
+
+### 10.6 What `exec` carries
+
+Fields this plugin actually uses from the `tools/pre-execute` `exec`:
+
+| Field | Use |
+|---|---|
+| `exec.name` | Is this an interactive tool? |
+| `exec.arguments` | Command content, for persistence classification |
+| `exec.agent` | The calling agent |
+| `exec.agent.session.id` | **Session id** — the argument to `wechatQueue.owns()` |
+
+**`exec.agent` may be `undefined`** (some calls have no agent context); this plugin allows those unconditionally.
+
+### 10.7 `agent/pre-step` messages are a delta
+
+`messages` holds **messages added in this step**, not the full history; DSH takes the delta via `claim()`.
+
+**That is what makes "reset the counter on a new user message" work.** With the full history, every step would see the same old message and the counter would reset forever.
+
+### 10.8 `source.kind` on injected messages
+
+When this plugin injects a reminder:
+
+```js
+source: { kind: 'user-approval', form: 'notice', … }
+```
+
+- **Use a kind already declared in `MessageSourceMap`**; a custom kind may be rejected downstream
+- **Do not use `'user'`** — this plugin's own `pre-step` would read it as a fresh user message and clear the count every step
+
+### 10.9 Sandbox mode needs two sources
+
+| Priority | Source | Note |
+|---|---|---|
+| 1 | `ctx.sessionProjections.stateOf(session, 'permissions').sandbox` | The session's **current** value; follows hot-switches |
+| 2 | `ctx.shell.sandboxMode` | The executor's **default**; does **not** follow hot-switches |
+
+**Reading only the second one is wrong**: switch into a sandbox and back, and you keep reading the value from process start.
+
+---
+
+## 11. Known limits
 
 **Not yet verified:**
 
@@ -469,7 +667,7 @@ Offline integration tests (18/18 passing) cover: 30 consecutive persistent opera
 
 ---
 
-## 10. Appendix: why full permissions are needed
+## 12. Appendix: why full permissions are needed
 
 On Windows, DSH's sandbox makes every `pwsh` call return `0xC0000142` (`STATUS_DLL_INIT_FAILED`). Three layers are responsible:
 
