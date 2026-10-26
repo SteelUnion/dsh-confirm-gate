@@ -1,8 +1,53 @@
 # dsh-confirm-gate
 
-**在完全权限的主机上，让 AI Agent 可控运行的次数闸框架。**
+> **你的 AI 助手一口气改 20 个文件、烧掉一整天额度之前，会先停下来问你一句。**
+>
+> 装上它，模型每动一次手就记一笔。额度快用完时它开始提醒自己刹车，
+> 到硬上限就停下来等你回一句 `confirm`。
+> **不用改 DSH 内核，没有必填配置。**
+>
+> *Stops your AI agent before it rewrites 20 files and burns a day of budget —
+> it counts, warns, then asks you to type `confirm` before going further.*
 
 [English](README.md) | 中文 · **v0.2.0**
+
+---
+
+## 三十秒上手
+
+```powershell
+npx -p @deepseek-ai/dsh dsh plugin --profile web add github:SteelUnion/dsh-confirm-gate
+```
+
+装完重启 DSH 就生效。想调额度就改 `cordis.patch.yml`：
+
+```yaml
+- id: confirm-gate
+  name: dsh-confirm-gate
+  config:
+    freeLimit: 10     # 前 10 次不管
+    hardLimit: 15     # 第 15 次停下来问你
+    confirmWord: confirm
+```
+
+---
+
+## 它替你省什么
+
+| 场景 | 没有它 | 有它 |
+|---|---|---|
+| 模型陷入循环、反复改同一个文件 | 一路烧到额度用完 | 第 11 次开始提醒，第 15 次停下 |
+| 你离开电脑半小时 | 回来发现改了两百个文件 | 停在你回来之前 |
+| 想让它继续 | 不知道它跑到哪了 | 回一句 `confirm`，整轮放行 |
+
+**它不是安全沙箱**——沙箱是 DSH 自己的事。它管的是**成本与方向**：
+让模型在烧钱和跑偏之前，有能力自己刹车。
+
+---
+
+## 下面开始是细节
+
+**在完全权限的主机上，让 AI Agent 可控运行的次数闸框架。**
 
 > **是什么** — 按轮统计持久化操作。给模型一个刹车，不是一堵墙。
 > **已验证** — Windows 真机热切换（full → workspace-write → read-only → full），全程不重启；模型在第 11/15 次**自己停下来了**。

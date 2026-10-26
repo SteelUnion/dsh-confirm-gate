@@ -1,8 +1,50 @@
 # dsh-confirm-gate
 
-**A bounded-run framework that keeps an AI agent accountable on hosts where you had to grant full permissions.**
+> **Stops your AI agent before it rewrites 20 files and burns a day of budget.**
+>
+> Install it and every action the model takes is counted. As the budget runs down it
+> starts telling the model to brake; at the hard limit the model stops and waits for you
+> to type `confirm`. **No kernel changes, no required config.**
 
 English | [中文](README.zh-CN.md) · **v0.2.0**
+
+---
+
+## 30-second start
+
+```powershell
+npx -p @deepseek-ai/dsh dsh plugin --profile web add github:SteelUnion/dsh-confirm-gate
+```
+
+Restart DSH and it is on. To tune the budget, edit `cordis.patch.yml`:
+
+```yaml
+- id: confirm-gate
+  name: dsh-confirm-gate
+  config:
+    freeLimit: 10     # first 10 calls go unnoticed
+    hardLimit: 15     # the 15th stops and asks you
+    confirmWord: confirm
+```
+
+---
+
+## What it saves you
+
+| Situation | Without it | With it |
+|---|---|---|
+| The model loops, rewriting the same file | Burns the whole budget | Warns from the 11th call, stops at the 15th |
+| You step away for half an hour | You come back to 200 changed files | It stopped before you got back |
+| You want it to continue | No idea how far it got | Reply `confirm` and the whole turn is released |
+
+**This is not a security sandbox** — sandboxing is DSH's own job. This manages **cost and
+direction**: it gives the model the ability to brake before it burns money or drifts.
+
+---
+
+## The details start here
+
+**A bounded-run framework that keeps an AI agent accountable on hosts where you had to grant full permissions.**
 
 > **What** — Per-turn counter for persistent operations. Gives the model a brake, not a wall.
 > **Verified** — Live hot-switch on Windows (full → workspace-write → read-only → full), no restart. The model stopped itself at 11/15.
