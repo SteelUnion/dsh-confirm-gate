@@ -3,7 +3,7 @@
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Zero deps](https://img.shields.io/badge/dependencies-zero-brightgreen)
 ![DSH](https://img.shields.io/badge/dsh-%E2%89%A50.2.0--rc.2-orange)
-![Version](https://img.shields.io/badge/version-0.2.0-lightgrey)
+![Version](https://img.shields.io/badge/version-0.2.1-lightgrey)
 
 > **Stops your AI agent before it rewrites 20 files and burns a day of budget.**
 >
@@ -11,7 +11,14 @@
 > starts telling the model to brake; at the hard limit the model stops and waits for you
 > to type `confirm`. **No kernel changes, no required config.**
 
-English | [中文](README.zh-CN.md) · **v0.2.0**
+English | [中文](README.zh-CN.md) · **v0.2.1**
+
+---
+
+## What's new in v0.2.1
+
+Behaviour is unchanged. This release adds the three files open-source catalogues ask
+for: `SECURITY.md`, a Dependabot config, and a `package-lock.json`. No code was touched.
 
 ---
 

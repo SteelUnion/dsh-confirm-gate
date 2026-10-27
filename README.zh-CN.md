@@ -3,7 +3,7 @@
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Zero deps](https://img.shields.io/badge/dependencies-zero-brightgreen)
 ![DSH](https://img.shields.io/badge/dsh-%E2%89%A50.2.0--rc.2-orange)
-![Version](https://img.shields.io/badge/version-0.2.0-lightgrey)
+![Version](https://img.shields.io/badge/version-0.2.1-lightgrey)
 
 > **你的 AI 助手一口气改 20 个文件、烧掉一整天额度之前，会先停下来问你一句。**
 >
@@ -14,7 +14,14 @@
 > *Stops your AI agent before it rewrites 20 files and burns a day of budget —
 > it counts, warns, then asks you to type `confirm` before going further.*
 
-[English](README.md) | 中文 · **v0.2.0**
+[English](README.md) | 中文 · **v0.2.1**
+
+---
+
+## v0.2.1 更新了什么
+
+插件行为没有变化。这次只补了开源清单要的三个仓库文件：`SECURITY.md`、Dependabot 配置、
+`package-lock.json`。代码没动。
 
 ---
 
