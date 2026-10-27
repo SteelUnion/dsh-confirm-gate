@@ -15,6 +15,24 @@ English | [中文](README.zh-CN.md) · **v0.2.0**
 
 ---
 
+## Plain language first
+
+You just installed dsh. You have a very capable thing on your hands, and no steering wheel.
+
+It works for a long time without saying anything, and you come back to find it went the wrong way. The same feature got written once last turn, then written again into a brand-new file this turn. You want it to continue, and you have no idea how far it got.
+
+**This plugin is the steering wheel.**
+
+- Reading is free. Opening files, searching code, listing directories never count. Only actions that change the world are counted.
+- Every counted step comes with a message telling the model to come back and ask you.
+- Hit the limit and it stops, waiting for your `confirm`.
+
+No configuration needed. To make it looser or tighter, change two numbers. Even the confirmation word is yours to choose.
+
+---
+
+The rest of this README is for people who want to know how it works.
+
 ## What it looks like while running
 
 ```
@@ -29,8 +47,8 @@ The model starts its 11th file change
   You type confirm → the whole turn is released, counter resets
 ```
 
-**It is not an interceptor; it is a counter that talks.** The first 10 calls go
-unnoticed, 11–14 tell the model to brake on its own, and only the 15th actually stops it.
+**It is not an interceptor; it is a counter that talks.** Every counted call comes with a message. The first 10 nudge the model to ask you;
+11–14 escalate to an instruction to stop; only the 15th actually blocks the tool.
 That gap is what lets the model come to a halt while you are away from the keyboard.
 
 ---
@@ -47,7 +65,7 @@ Restart DSH and it is on. To tune the budget, edit `cordis.patch.yml`:
 - id: confirm-gate
   name: dsh-confirm-gate
   config:
-    freeLimit: 10     # first 10 calls go unnoticed
+    freeLimit: 10     # allowed, with a reminder injected
     hardLimit: 15     # the 15th stops and asks you
     confirmWord: confirm
 ```
