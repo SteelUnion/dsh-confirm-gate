@@ -3,7 +3,7 @@
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Zero deps](https://img.shields.io/badge/dependencies-zero-brightgreen)
 ![DSH](https://img.shields.io/badge/dsh-%E2%89%A50.2.0--rc.2-orange)
-![Version](https://img.shields.io/badge/version-0.2.1-lightgrey)
+![Version](https://img.shields.io/badge/version-0.3.0-lightgrey)
 
 > **你的 AI 助手一口气改 20 个文件、烧掉一整天额度之前，会先停下来问你一句。**
 >
@@ -14,14 +14,17 @@
 > *Stops your AI agent before it rewrites 20 files and burns a day of budget —
 > it counts, warns, then asks you to type `confirm` before going further.*
 
-[English](README.md) | 中文 · **v0.2.1**
+[English](README.md) | 中文 · **v0.3.0**
 
 ---
 
-## v0.2.1 更新了什么
+## v0.3.0 更新了什么
 
-插件行为没有变化。这次只补了开源清单要的三个仓库文件：`SECURITY.md`、Dependabot 配置、
-`package-lock.json`。代码没动。
+沙盒模式下，门控现在也照样工作。
+
+以前在 `read-only` 和 `workspace-write` 下它会自动让开，理由是「沙盒已经把模型能碰的东西框住了」。但那个理由管的是**能碰什么**，不是**碰多少次**：workspace-write 会话里连改 40 个文件，还是 40 次改动，第 41 次之前照样值得提醒一句。
+
+所以 `SANDBOX_MANAGED_MODES` 现在是空集合，任何模式下都计数。计数、三档提醒、`confirm` 放行这些都没有变。如果你依赖旧的让开行为，把 `lib/index.js` 里的 `SANDBOX_MANAGED_MODES` 改回 `['read-only', 'workspace-write']` 即可。另外修了一处正确性问题：模式检测改成每次调用现读，不再缓存，会话中途切换权限模式会立刻跟上。
 
 ---
 

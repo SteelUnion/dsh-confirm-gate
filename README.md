@@ -3,7 +3,7 @@
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Zero deps](https://img.shields.io/badge/dependencies-zero-brightgreen)
 ![DSH](https://img.shields.io/badge/dsh-%E2%89%A50.2.0--rc.2-orange)
-![Version](https://img.shields.io/badge/version-0.2.1-lightgrey)
+![Version](https://img.shields.io/badge/version-0.3.0-lightgrey)
 
 > **Stops your AI agent before it rewrites 20 files and burns a day of budget.**
 >
@@ -11,14 +11,24 @@
 > starts telling the model to brake; at the hard limit the model stops and waits for you
 > to type `confirm`. **No kernel changes, no required config.**
 
-English | [中文](README.zh-CN.md) · **v0.2.1**
+English | [中文](README.zh-CN.md) · **v0.3.0**
 
 ---
 
-## What's new in v0.2.1
+## What's new in v0.3.0
 
-Behaviour is unchanged. This release adds the three files open-source catalogues ask
-for: `SECURITY.md`, a Dependabot config, and a `package-lock.json`. No code was touched.
+The gate now stays active under sandbox modes too. Previously it stepped aside in
+`read-only` and `workspace-write`, on the reasoning that a sandbox already bounds what
+the model can do. That reasoning covered *what* the model can touch, not *how many times*
+it touches it: 40 file edits inside a workspace-write session are still 40 edits, and
+still worth a nudge before the 41st.
+
+So `SANDBOX_MANAGED_MODES` is now empty and the counter runs in every mode. The
+counter, the three reminder tiers, and the `confirm` release are all unchanged. If you
+relied on the old stepping-aside behaviour, set `SANDBOX_MANAGED_MODES` back to
+`['read-only', 'workspace-write']` in `lib/index.js`. Correctness fix only: the streaming
+mode-detection path now reads the mode on each call rather than caching it, so switching
+permission modes mid-session follows immediately.
 
 ---
 

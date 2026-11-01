@@ -2,7 +2,7 @@
  * 离线集成测试：用假 ctx 模拟 DSH 的钩子流水线。
  * 验证：清零、计数、分档、ask 触发、非持久化不计数。
  */
-import { apply, isPersistent } from '../../confirm-gate/lib/index.js';
+import { apply, isPersistent } from '../lib/index.js';
 
 // ---- 假 ctx：只收集监听器 ----
 const handlers = {};
@@ -237,13 +237,13 @@ async function main() {
     check('会话无投影 → 回落默认值仍生效', await activeByDecision({ shellMode: 'danger-full-access', projectionsMode: undefined }), true);
     check('无 shell 服务 生效', await activeByDecision({ shellMode: '__NONE__', projectionsMode: '__NONE__' }), true);
 
-    // 沙盒接管 → 不生效
-    check('workspace-write 不生效', await activeByDecision({ shellMode: 'workspace-write', projectionsMode: 'workspace-write' }), false);
-    check('read-only 不生效', await activeByDecision({ shellMode: 'read-only', projectionsMode: 'read-only' }), false);
+    // v0.3.0 起：沙盒模式也一律生效（SANDBOX_MANAGED_MODES 为空集）
+    check('workspace-write 生效', await activeByDecision({ shellMode: 'workspace-write', projectionsMode: 'workspace-write' }), true);
+    check('read-only 生效', await activeByDecision({ shellMode: 'read-only', projectionsMode: 'read-only' }), true);
 
-    // **热切换**：默认值是完全权限，会话切到沙盒 → 应立刻不生效
-    check('热切换：默认全权 + 会话沙盒 → 不生效', await activeByDecision({ shellMode: 'danger-full-access', projectionsMode: 'workspace-write' }), false);
-    // 反方向：默认沙盒，会话切回完全权限 → 应立刻生效
+    // **热切换**：默认值是完全权限，会话切到沙盒 → 仍然生效（不再因切档而失效）
+    check('热切换：默认全权 + 会话沙盒 → 仍生效', await activeByDecision({ shellMode: 'danger-full-access', projectionsMode: 'workspace-write' }), true);
+    // 反方向：默认沙盒，会话切回完全权限 → 仍生效
     check('热切换：默认沙盒 + 会话全权 → 生效', await activeByDecision({ shellMode: 'workspace-write', projectionsMode: 'danger-full-access' }), true);
 
     // 两个数据源都读不到 → 倾向于生效（静默失效比多提醒更难排查）

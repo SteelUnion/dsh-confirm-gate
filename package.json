@@ -1,6 +1,6 @@
 {
-  "name": "dsh-confirm-gate",
-  "version": "0.2.1",
+  "name": "@steelunion/dsh-confirm-gate",
+  "version": "0.3.0",
   "description": "Bounded-run framework for DeepSeek Harness: per-turn persistent-operation counter that reminds, then instructs the model to stop, then asks the user for confirmation.",
   "keywords": [
     "deepseek-harness",
@@ -31,9 +31,6 @@
     "test": "node test/integration.mjs"
   },
   "dependencies": {},
-  "engines": {
-    "dsh": ">=0.2.0-rc.2 <0.2.1 || >=0.2.1-0 <0.3.0"
-  },
   "peerDependencies": {
     "@deepseek-ai/dsh": ">=0.2.0-rc.2",
     "@deepseek-ai/dsh-tools": ">=0.2.0-rc.2",
@@ -45,7 +42,7 @@
     }
   },
   "license": "MIT",
-  "author": "Yuanfu Xu (https://github.com/SteelUnion)",
+  "author": "SteelUnion",
   "homepage": "https://github.com/SteelUnion/dsh-confirm-gate#readme",
   "bugs": {
     "url": "https://github.com/SteelUnion/dsh-confirm-gate/issues"
